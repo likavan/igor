@@ -1,0 +1,3 @@
+python-telegram-bot[job-scheduling]
+anthropic
+python-dotenv
