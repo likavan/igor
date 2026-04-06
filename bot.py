@@ -88,7 +88,9 @@ def parse_relative_datetime(day_str, time_str):
 
 async def ask_claude(user_message):
     now = datetime.now(TZ)
-    message_with_date = f"[Dnes je {now.strftime('%d.%m.%Y')}, {now.strftime('%H:%M')}]\n{user_message}"
+    days_sk = ["pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota", "nedeľa"]
+    day_name = days_sk[now.weekday()]
+    message_with_date = f"[Dnes je {day_name} {now.strftime('%d.%m.%Y')}, {now.strftime('%H:%M')}]\n{user_message}"
     conversation_history.append({"role": "user", "content": message_with_date})
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-20250514",
