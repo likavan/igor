@@ -1,4 +1,7 @@
 import os
+import imaplib
+import email
+from email.header import decode_header
 import sqlite3
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
@@ -13,6 +16,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 YOUR_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
 TZ = ZoneInfo(os.getenv("TIMEZONE", "Europe/Bratislava"))
+IMAP_SERVER = os.getenv("IMAP_SERVER")
+IMAP_EMAIL = os.getenv("IMAP_EMAIL")
+IMAP_PASSWORD = os.getenv("IMAP_PASSWORD")
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
@@ -85,6 +91,59 @@ def parse_relative_datetime(day_str, time_str):
     else:
         return None
     return target
+
+def decode_mime_header(header):
+    parts = decode_header(header or "")
+    result = []
+    for data, charset in parts:
+        if isinstance(data, bytes):
+            result.append(data.decode(charset or "utf-8", errors="replace"))
+        else:
+            result.append(data)
+    return "".join(result)
+
+def fetch_emails(count=5, unseen_only=False):
+    mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+    mail.login(IMAP_EMAIL, IMAP_PASSWORD)
+    mail.select("INBOX")
+    criterion = "UNSEEN" if unseen_only else "ALL"
+    _, data = mail.search(None, criterion)
+    ids = data[0].split()
+    if not ids:
+        mail.logout()
+        return []
+    latest_ids = ids[-count:]
+    emails = []
+    for eid in reversed(latest_ids):
+        _, msg_data = mail.fetch(eid, "(RFC822)")
+        msg = email.message_from_bytes(msg_data[0][1])
+        sender = decode_mime_header(msg["From"])
+        subject = decode_mime_header(msg["Subject"])
+        date = msg["Date"]
+        emails.append({"from": sender, "subject": subject, "date": date})
+    mail.logout()
+    return emails
+
+async def check_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    unseen = "--new" in (context.args or [])
+    count = 5
+    for arg in (context.args or []):
+        if arg.isdigit():
+            count = int(arg)
+    try:
+        emails = fetch_emails(count=count, unseen_only=unseen)
+    except Exception as e:
+        await update.message.reply_text(f"Chyba pri pripájaní k emailu: {e}")
+        return
+    if not emails:
+        await update.message.reply_text("Žiadne nové emaily." if unseen else "Žiadne emaily.")
+        return
+    msg = f"📧 *{'Neprečítané' if unseen else 'Posledné'} emaily:*\n\n"
+    for e in emails:
+        msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def ask_claude(user_message):
     now = datetime.now(TZ)
@@ -181,6 +240,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("delete", delete_reminder))
+    app.add_handler(CommandHandler("emails", check_emails))
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)
     app.job_queue.run_daily(morning_summary, time=time(hour=8, minute=0, tzinfo=TZ))
     print("Bot beží...")
