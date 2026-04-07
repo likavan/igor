@@ -126,12 +126,13 @@ async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Chyba pri pripájaní k emailu: {e}")
         return
-    if not emails:
-        await update.message.reply_text("Žiadne neprečítané emaily.")
+    new_emails = [e for e in emails if not is_email_notified(e["message_id"])]
+    if not new_emails:
+        await update.message.reply_text("Žiadne nové neprečítané emaily.")
         return
-    for e in emails:
+    for e in new_emails:
         mark_email_notified(e["message_id"])
-    msg = format_email_list(emails, "Neprečítané emaily:")
+    msg = format_email_list(new_emails, f"Nových emailov: {len(new_emails)}")
     await update.message.reply_text(msg, parse_mode="HTML")
 
 
