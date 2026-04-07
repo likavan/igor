@@ -1,5 +1,10 @@
 # Igor
 
+**I**nteligentný  
+**G**ranulárny  
+**O**sobný  
+**R**obot
+
 Personal AI assistant running as a Telegram bot, powered by Claude. Built to manage daily tasks, emails and work projects from a single chat interface.
 
 ## Features
