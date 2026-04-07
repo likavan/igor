@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
-from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime
+from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified
 from emails import fetch_emails
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -144,10 +144,13 @@ async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
         emails = fetch_emails(count=10, unseen_only=True)
     except Exception:
         return
-    if not emails:
+    new_emails = [e for e in emails if not is_email_notified(e["message_id"])]
+    if not new_emails:
         return
-    msg = f"📧 *Máš {len(emails)} neprečítaných emailov:*\n\n"
-    for e in emails:
+    for e in new_emails:
+        mark_email_notified(e["message_id"])
+    msg = f"📧 *Máš {len(new_emails)} nových emailov:*\n\n"
+    for e in new_emails:
         msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="Markdown")
 

@@ -14,6 +14,12 @@ def init_db():
             done INTEGER DEFAULT 0
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS notified_emails (
+            message_id TEXT PRIMARY KEY,
+            notified_at DATETIME NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -49,6 +55,24 @@ def mark_done(reminder_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
     c.execute("UPDATE reminders SET done=1 WHERE id=?", (reminder_id,))
+    conn.commit()
+    conn.close()
+
+
+def is_email_notified(message_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM notified_emails WHERE message_id=?", (message_id,))
+    result = c.fetchone()
+    conn.close()
+    return result is not None
+
+
+def mark_email_notified(message_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO notified_emails (message_id, notified_at) VALUES (?, ?)",
+              (message_id, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
     conn.commit()
     conn.close()
 

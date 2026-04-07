@@ -29,16 +29,17 @@ def fetch_emails(count=5, unseen_only=False):
     latest_ids = ids[-count:]
     emails = []
     for eid in reversed(latest_ids):
-        _, msg_data = mail.fetch(eid, "(RFC822)")
+        _, msg_data = mail.fetch(eid, "(BODY.PEEK[])")
         msg = email.message_from_bytes(msg_data[0][1])
         sender = decode_mime_header(msg["From"])
         subject = decode_mime_header(msg["Subject"])
+        message_id = msg["Message-ID"] or f"{eid.decode()}-{msg['Date']}"
         date_raw = msg["Date"]
         try:
             dt = email.utils.parsedate_to_datetime(date_raw).astimezone(TZ)
             date = dt.strftime("%d.%m.%Y %H:%M")
         except Exception:
             date = date_raw
-        emails.append({"from": sender, "subject": subject, "date": date})
+        emails.append({"from": sender, "subject": subject, "date": date, "message_id": message_id})
     mail.logout()
     return emails
