@@ -1,6 +1,7 @@
 import os
 import imaplib
 import email
+import email.utils
 from email.header import decode_header
 import sqlite3
 from datetime import datetime, timedelta, time
@@ -120,7 +121,12 @@ def fetch_emails(count=5, unseen_only=False):
         msg = email.message_from_bytes(msg_data[0][1])
         sender = decode_mime_header(msg["From"])
         subject = decode_mime_header(msg["Subject"])
-        date = msg["Date"]
+        date_raw = msg["Date"]
+        try:
+            dt = email.utils.parsedate_to_datetime(date_raw).astimezone(TZ)
+            date = dt.strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            date = date_raw
         emails.append({"from": sender, "subject": subject, "date": date})
     mail.logout()
     return emails
