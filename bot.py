@@ -1,9 +1,9 @@
 from datetime import time
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters
 from config import TELEGRAM_TOKEN, TZ
 from db import init_db
 from handlers import (
-    handle_message, help_command,
+    handle_message, handle_callback, help_command,
     list_reminders, delete_reminder,
     check_emails, check_new_emails,
     check_reminders, check_emails_periodic, morning_summary,
@@ -24,6 +24,7 @@ def main():
     app.add_handler(CommandHandler("emails", check_emails))
     app.add_handler(CommandHandler("e", check_emails))
     app.add_handler(CommandHandler("en", check_new_emails))
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)
     app.job_queue.run_repeating(check_emails_periodic, interval=3600, first=60)

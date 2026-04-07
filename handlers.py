@@ -1,11 +1,13 @@
+import json
 from html import escape
 from datetime import datetime
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
 from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified
 from emails import fetch_emails
+from gitlab import search_projects, create_issue, list_my_issues
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
@@ -49,6 +51,16 @@ Príklady:
 EMAIL|LIST (keď sa pýta na emaily, poštu, maily)
 EMAIL|LIST|10 (keď chce viac emailov)
 EMAIL|NEW (keď sa pýta na nové/neprečítané emaily)
+
+GITLAB:
+GITLAB|AKCIA|parametre
+Akcie:
+- GITLAB|CREATE|kľúčové_slovo_projektu|názov_tasku|popis (popis je voliteľný)
+- GITLAB|ISSUES — zobraz moje otvorené issues
+Príklady:
+GITLAB|CREATE|digitalka|Opraviť login stránku|Nefunguje prihlásenie cez SSO
+GITLAB|CREATE|eshop|Pridať export objednávok
+GITLAB|ISSUES
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -98,6 +110,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode="HTML")
         except Exception as e:
             await update.message.reply_text(f"Chyba pri pripájaní k emailu: {e}")
+    elif reply.startswith("GITLAB|"):
+        parts = reply.split("|")
+        action = parts[1].strip()
+        try:
+            if action == "CREATE":
+                keyword = parts[2].strip()
+                title = parts[3].strip()
+                description = parts[4].strip() if len(parts) > 4 else ""
+                projects = search_projects(keyword)
+                if not projects:
+                    await update.message.reply_text(f"Nenašiel som projekt pre '{keyword}'.")
+                    return
+                if len(projects) == 1:
+                    project = projects[0]
+                    issue = create_issue(project["id"], title, description)
+                    msg = (
+                        f"✅ Issue vytvorený:\n"
+                        f"<b>Projekt:</b> {escape(project['name'])}\n"
+                        f"<b>#{issue['id']}:</b> {escape(issue['title'])}\n"
+                        f"<a href=\"{issue['url']}\">Otvoriť v GitLab</a>"
+                    )
+                    await update.message.reply_text(msg, parse_mode="HTML")
+                else:
+                    keyboard = []
+                    for p in projects:
+                        callback_data = json.dumps({"a": "gi", "p": p["id"], "t": title, "d": description[:100]})
+                        keyboard.append([InlineKeyboardButton(p["name"], callback_data=callback_data)])
+                    await update.message.reply_text(
+                        f"Našiel som viac projektov pre '<b>{escape(keyword)}</b>'.\nVyber projekt:",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+            elif action == "ISSUES":
+                issues = list_my_issues()
+                if not issues:
+                    await update.message.reply_text("Nemáš žiadne otvorené issues.")
+                    return
+                msg = "📋 <b>Moje otvorené issues:</b>\n\n"
+                for i in issues:
+                    msg += f"• <b>#{i['id']}</b> {escape(i['title'])}\n  <i>{escape(i['project'])}</i>\n\n"
+                await update.message.reply_text(msg, parse_mode="HTML")
+        except Exception as e:
+            await update.message.reply_text(f"Chyba GitLab: {e}")
     else:
         await update.message.reply_text(reply)
 
@@ -220,3 +275,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Alebo mi napíš čokoľvek 💬"
     )
     await update.message.reply_text(msg, parse_mode="HTML")
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != YOUR_CHAT_ID:
+        return
+    await query.answer()
+    data = json.loads(query.data)
+    if data["a"] == "gi":
+        try:
+            issue = create_issue(data["p"], data["t"], data.get("d", ""))
+            msg = (
+                f"✅ Issue vytvorený:\n"
+                f"<b>#{issue['id']}:</b> {escape(issue['title'])}\n"
+                f"<a href=\"{issue['url']}\">Otvoriť v GitLab</a>"
+            )
+            await query.edit_message_text(msg, parse_mode="HTML")
+        except Exception as e:
+            await query.edit_message_text(f"Chyba GitLab: {e}")
