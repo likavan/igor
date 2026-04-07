@@ -146,6 +146,22 @@ async def check_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    try:
+        emails = fetch_emails(count=10, unseen_only=True)
+    except Exception as e:
+        await update.message.reply_text(f"Chyba pri pripájaní k emailu: {e}")
+        return
+    if not emails:
+        await update.message.reply_text("Žiadne neprečítané emaily.")
+        return
+    msg = "📧 *Neprečítané emaily:*\n\n"
+    for e in emails:
+        msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def ask_claude(user_message):
     now = datetime.now(TZ)
     days_sk = ["pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota", "nedeľa"]
@@ -240,8 +256,12 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CommandHandler("reminders", list_reminders))
+    app.add_handler(CommandHandler("r", list_reminders))
     app.add_handler(CommandHandler("delete", delete_reminder))
+    app.add_handler(CommandHandler("d", delete_reminder))
     app.add_handler(CommandHandler("emails", check_emails))
+    app.add_handler(CommandHandler("e", check_emails))
+    app.add_handler(CommandHandler("en", check_new_emails))
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)
     app.job_queue.run_daily(morning_summary, time=time(hour=8, minute=0, tzinfo=TZ))
     print("Bot beží...")
