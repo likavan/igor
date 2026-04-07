@@ -251,10 +251,27 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
             msg += f"• {r[1]} – {r[0]}\n"
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg)
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    msg = (
+        "📖 *Príkazy:*\n\n"
+        "/e — posledných 5 emailov\n"
+        "/e 10 — posledných 10 emailov\n"
+        "/en — neprečítané emaily\n"
+        "/r — zoznam pripomienok\n"
+        "/d 3 — zmazať pripomienku č. 3\n"
+        "/h — táto nápoveda\n\n"
+        "Alebo mi napíš čokoľvek 💬"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 def main():
     init_db()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("h", help_command))
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("r", list_reminders))
     app.add_handler(CommandHandler("delete", delete_reminder))
