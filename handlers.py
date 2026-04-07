@@ -1,3 +1,4 @@
+from html import escape
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -8,6 +9,13 @@ from emails import fetch_emails
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
+
+
+def format_email_list(emails, title):
+    msg = f"📧 <b>{escape(title)}</b>\n\n"
+    for e in emails:
+        msg += f"<b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
+    return msg
 
 
 async def ask_claude(user_message):
@@ -72,10 +80,10 @@ async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("Žiadne pripomienky.")
         return
-    msg = "📋 *Tvoje pripomienky:*\n\n"
+    msg = "📋 <b>Tvoje pripomienky:</b>\n\n"
     for row in rows:
-        msg += f"• {row[2]} – {row[1]} (id:{row[0]})\n"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+        msg += f"• {escape(row[2])} – {escape(row[1])} (id:{row[0]})\n"
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,10 +112,9 @@ async def check_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not emails:
         await update.message.reply_text("Žiadne nové emaily." if unseen else "Žiadne emaily.")
         return
-    msg = f"📧 *{'Neprečítané' if unseen else 'Posledné'} emaily:*\n\n"
-    for e in emails:
-        msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    title = "Neprečítané emaily:" if unseen else "Posledné emaily:"
+    msg = format_email_list(emails, title)
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,10 +128,8 @@ async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not emails:
         await update.message.reply_text("Žiadne neprečítané emaily.")
         return
-    msg = "📧 *Neprečítané emaily:*\n\n"
-    for e in emails:
-        msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    msg = format_email_list(emails, "Neprečítané emaily:")
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
@@ -149,10 +154,8 @@ async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
         return
     for e in new_emails:
         mark_email_notified(e["message_id"])
-    msg = f"📧 *Máš {len(new_emails)} nových emailov:*\n\n"
-    for e in new_emails:
-        msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
-    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="Markdown")
+    msg = format_email_list(new_emails, f"Máš {len(new_emails)} nových emailov:")
+    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
 
 
 async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
@@ -170,7 +173,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     msg = (
-        "📖 *Príkazy:*\n\n"
+        "📖 <b>Príkazy:</b>\n\n"
         "/e — posledných 5 emailov\n"
         "/e 10 — posledných 10 emailov\n"
         "/en — neprečítané emaily\n"
@@ -179,4 +182,4 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg, parse_mode="HTML")
