@@ -11,6 +11,7 @@ from gitlab import search_projects, create_issue, list_my_issues
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
+email_cache = {}
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -19,9 +20,10 @@ def format_email_list(emails, title, highlight_unseen=False):
     for i, e in enumerate(emails):
         prefix = "🔵 " if highlight_unseen and e.get("unseen") else ""
         msg += f"{prefix}<b>{i+1}.</b> <b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
+        cache_key = f"em{i}_{id(emails)}"
+        email_cache[cache_key] = e["message_id"]
         label = f"{i+1}. {e['subject'][:30]}"
-        callback_data = json.dumps({"a": "em", "mid": e["message_id"][:60]})
-        keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
+        keyboard.append([InlineKeyboardButton(label, callback_data=cache_key)])
     return msg, keyboard
 
 
@@ -286,7 +288,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != YOUR_CHAT_ID:
         return
     await query.answer()
-    data = json.loads(query.data)
+    raw = query.data
+    if raw.startswith("em"):
+        message_id = email_cache.get(raw)
+        if not message_id:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
+            return
+        try:
+            body = fetch_email_body(message_id)
+            if not body:
+                await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email sa nepodarilo načítať.")
+                return
+            import re
+            if "<html" in body.lower() or "<body" in body.lower():
+                body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
+                body = re.sub(r'<[^>]+>', '', body)
+                body = re.sub(r'\s+', ' ', body).strip()
+            if len(body) > 3500:
+                body = body[:3500] + "\n\n... (skrátené)"
+            await context.bot.send_message(
+                chat_id=YOUR_CHAT_ID,
+                text=f"📩 <b>Email:</b>\n\n{escape(body)}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"Chyba pri čítaní emailu: {e}")
+        return
+    data = json.loads(raw)
     if data["a"] == "gi":
         try:
             issue = create_issue(data["p"], data["t"], data.get("d", ""))
@@ -298,25 +326,3 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
-    elif data["a"] == "em":
-        try:
-            body = fetch_email_body(data["mid"])
-            if not body:
-                await query.answer("Email sa nepodarilo načítať.")
-                return
-            # Strip HTML tags if it's HTML content
-            import re
-            if "<html" in body.lower() or "<body" in body.lower():
-                body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
-                body = re.sub(r'<[^>]+>', '', body)
-                body = re.sub(r'\s+', ' ', body).strip()
-            # Telegram limit is 4096 chars
-            if len(body) > 3500:
-                body = body[:3500] + "\n\n... (skrátené)"
-            await context.bot.send_message(
-                chat_id=YOUR_CHAT_ID,
-                text=f"📩 <b>Email:</b>\n\n{escape(body)}",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"Chyba pri čítaní emailu: {e}")
