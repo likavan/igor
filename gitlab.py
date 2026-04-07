@@ -2,6 +2,16 @@ import requests
 from config import GITLAB_URL, GITLAB_TOKEN
 
 HEADERS = {"PRIVATE-TOKEN": GITLAB_TOKEN}
+_user_id = None
+
+
+def get_my_user_id():
+    global _user_id
+    if _user_id is None:
+        resp = requests.get(f"{GITLAB_URL}/api/v4/user", headers=HEADERS)
+        resp.raise_for_status()
+        _user_id = resp.json()["id"]
+    return _user_id
 
 
 def search_projects(keyword):
@@ -15,7 +25,7 @@ def search_projects(keyword):
 
 
 def create_issue(project_id, title, description=""):
-    params = {"title": title}
+    params = {"title": title, "assignee_ids": [get_my_user_id()]}
     if description:
         params["description"] = description
     resp = requests.post(
