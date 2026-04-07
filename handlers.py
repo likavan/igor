@@ -30,17 +30,27 @@ async def ask_claude(user_message):
         max_tokens=1000,
         system="""Si osobný asistent Martina. Komunikuješ po slovensky, si stručný a praktický.
 
-Ak chce Martin pridať pripomienku, odpovedz PRESNE takto a nič iné:
+Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte a nič iné:
+
+PRIPOMIENKA:
 REMINDER|DEŇ|HH:MM|text
-
-DEŇ môže byť LEN jedno z: dnes, zajtra, pozajtra, pondelok, utorok, streda, štvrtok, piatok, sobota, nedeľa
-HH:MM je čas v 24h formáte
-
+DEŇ môže byť LEN: dnes, zajtra, pozajtra, pondelok, utorok, streda, štvrtok, piatok, sobota, nedeľa
 Príklady:
 REMINDER|zajtra|08:30|Porada
 REMINDER|pondelok|14:00|Odoslať faktúru
 
-Ak nejde o pripomienku, odpovedaj normálne.""",
+EMAILY:
+EMAIL|AKCIA
+AKCIA môže byť:
+- LIST — zobraz posledných 5 emailov
+- LIST|N — zobraz posledných N emailov
+- NEW — zobraz nové neprečítané emaily
+Príklady:
+EMAIL|LIST (keď sa pýta na emaily, poštu, maily)
+EMAIL|LIST|10 (keď chce viac emailov)
+EMAIL|NEW (keď sa pýta na nové/neprečítané emaily)
+
+Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
     )
     reply = response.content[0].text
@@ -65,6 +75,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Pripomienka uložená: {text}\n📅 {remind_at.strftime('%d.%m.%Y o %H:%M')}")
         else:
             await update.message.reply_text(f"❌ Nepodarilo sa rozpoznať deň: {day_str}")
+    elif reply.startswith("EMAIL|"):
+        parts = reply.split("|")
+        action = parts[1].strip()
+        try:
+            if action == "NEW":
+                emails = fetch_emails(count=10, unseen_only=True)
+                new_emails = [e for e in emails if not is_email_notified(e["message_id"])]
+                if not new_emails:
+                    await update.message.reply_text("Žiadne nové neprečítané emaily.")
+                    return
+                for e in new_emails:
+                    mark_email_notified(e["message_id"])
+                msg = format_email_list(new_emails, f"Nových emailov: {len(new_emails)}")
+            else:
+                count = int(parts[2]) if len(parts) > 2 else 5
+                emails = fetch_emails(count=count, unseen_only=False)
+                if not emails:
+                    await update.message.reply_text("Žiadne emaily.")
+                    return
+                msg = format_email_list(emails, "Posledné emaily:", highlight_unseen=True)
+            await update.message.reply_text(msg, parse_mode="HTML")
+        except Exception as e:
+            await update.message.reply_text(f"Chyba pri pripájaní k emailu: {e}")
     else:
         await update.message.reply_text(reply)
 
