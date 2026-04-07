@@ -11,10 +11,13 @@ anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
 
 
-def format_email_list(emails, title):
+def format_email_list(emails, title, highlight_unseen=False):
     msg = f"📧 <b>{escape(title)}</b>\n\n"
     for e in emails:
-        msg += f"<b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
+        if highlight_unseen and e.get("unseen"):
+            msg += f"🔵 <b>Od:</b> <b>{escape(e['from'])}</b>\n<b>Predmet:</b> <b>{escape(e['subject'])}</b>\n<b>Dátum:</b> <b>{escape(e['date'])}</b>\n\n"
+        else:
+            msg += f"Od: {escape(e['from'])}\nPredmet: {escape(e['subject'])}\nDátum: {escape(e['date'])}\n\n"
     return msg
 
 
@@ -113,7 +116,7 @@ async def check_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Žiadne nové emaily." if unseen else "Žiadne emaily.")
         return
     title = "Neprečítané emaily:" if unseen else "Posledné emaily:"
-    msg = format_email_list(emails, title)
+    msg = format_email_list(emails, title, highlight_unseen=not unseen)
     await update.message.reply_text(msg, parse_mode="HTML")
 
 
@@ -128,6 +131,8 @@ async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not emails:
         await update.message.reply_text("Žiadne neprečítané emaily.")
         return
+    for e in emails:
+        mark_email_notified(e["message_id"])
     msg = format_email_list(emails, "Neprečítané emaily:")
     await update.message.reply_text(msg, parse_mode="HTML")
 

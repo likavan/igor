@@ -29,7 +29,9 @@ def fetch_emails(count=5, unseen_only=False):
     latest_ids = ids[-count:]
     emails = []
     for eid in reversed(latest_ids):
-        _, msg_data = mail.fetch(eid, "(BODY.PEEK[])")
+        _, msg_data = mail.fetch(eid, "(BODY.PEEK[] FLAGS)")
+        raw_flags = msg_data[0][0].decode() if msg_data[0][0] else ""
+        unseen = "\\Seen" not in raw_flags
         msg = email.message_from_bytes(msg_data[0][1])
         sender = decode_mime_header(msg["From"])
         subject = decode_mime_header(msg["Subject"])
@@ -40,6 +42,6 @@ def fetch_emails(count=5, unseen_only=False):
             date = dt.strftime("%d.%m.%Y %H:%M")
         except Exception:
             date = date_raw
-        emails.append({"from": sender, "subject": subject, "date": date, "message_id": message_id})
+        emails.append({"from": sender, "subject": subject, "date": date, "message_id": message_id, "unseen": unseen})
     mail.logout()
     return emails
