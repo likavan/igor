@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
 from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified
-from emails import fetch_emails
+from emails import fetch_emails, fetch_email_body
 from gitlab import search_projects, create_issue, list_my_issues
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -15,10 +15,14 @@ conversation_history = []
 
 def format_email_list(emails, title, highlight_unseen=False):
     msg = f"📧 <b>{escape(title)}</b>\n\n"
-    for e in emails:
+    keyboard = []
+    for i, e in enumerate(emails):
         prefix = "🔵 " if highlight_unseen and e.get("unseen") else ""
-        msg += f"{prefix}<b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
-    return msg
+        msg += f"{prefix}<b>{i+1}.</b> <b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
+        label = f"{i+1}. {e['subject'][:30]}"
+        callback_data = json.dumps({"a": "em", "mid": e["message_id"][:60]})
+        keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
+    return msg, keyboard
 
 
 async def ask_claude(user_message):
@@ -99,15 +103,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 for e in new_emails:
                     mark_email_notified(e["message_id"])
-                msg = format_email_list(new_emails, f"Nových emailov: {len(new_emails)}")
+                msg, keyboard = format_email_list(new_emails, f"Nových emailov: {len(new_emails)}")
             else:
                 count = int(parts[2]) if len(parts) > 2 else 5
                 emails = fetch_emails(count=count, unseen_only=False)
                 if not emails:
                     await update.message.reply_text("Žiadne emaily.")
                     return
-                msg = format_email_list(emails, "Posledné emaily:", highlight_unseen=True)
-            await update.message.reply_text(msg, parse_mode="HTML")
+                msg, keyboard = format_email_list(emails, "Posledné emaily:", highlight_unseen=True)
+            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         except Exception as e:
             await update.message.reply_text(f"Chyba pri pripájaní k emailu: {e}")
     elif reply.startswith("GITLAB|"):
@@ -202,8 +206,8 @@ async def check_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Žiadne nové emaily." if unseen else "Žiadne emaily.")
         return
     title = "Neprečítané emaily:" if unseen else "Posledné emaily:"
-    msg = format_email_list(emails, title, highlight_unseen=not unseen)
-    await update.message.reply_text(msg, parse_mode="HTML")
+    msg, keyboard = format_email_list(emails, title, highlight_unseen=not unseen)
+    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,8 +224,8 @@ async def check_new_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     for e in new_emails:
         mark_email_notified(e["message_id"])
-    msg = format_email_list(new_emails, f"Nových emailov: {len(new_emails)}")
-    await update.message.reply_text(msg, parse_mode="HTML")
+    msg, keyboard = format_email_list(new_emails, f"Nových emailov: {len(new_emails)}")
+    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
@@ -246,8 +250,8 @@ async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
         return
     for e in new_emails:
         mark_email_notified(e["message_id"])
-    msg = format_email_list(new_emails, f"Máš {len(new_emails)} nových emailov:")
-    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
+    msg, keyboard = format_email_list(new_emails, f"Máš {len(new_emails)} nových emailov:")
+    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
@@ -294,3 +298,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
+    elif data["a"] == "em":
+        try:
+            body = fetch_email_body(data["mid"])
+            if not body:
+                await query.answer("Email sa nepodarilo načítať.")
+                return
+            # Strip HTML tags if it's HTML content
+            import re
+            if "<html" in body.lower() or "<body" in body.lower():
+                body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
+                body = re.sub(r'<[^>]+>', '', body)
+                body = re.sub(r'\s+', ' ', body).strip()
+            # Telegram limit is 4096 chars
+            if len(body) > 3500:
+                body = body[:3500] + "\n\n... (skrátené)"
+            await context.bot.send_message(
+                chat_id=YOUR_CHAT_ID,
+                text=f"📩 <b>Email:</b>\n\n{escape(body)}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"Chyba pri čítaní emailu: {e}")
