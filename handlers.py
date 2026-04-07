@@ -14,10 +14,8 @@ conversation_history = []
 def format_email_list(emails, title, highlight_unseen=False):
     msg = f"📧 <b>{escape(title)}</b>\n\n"
     for e in emails:
-        if highlight_unseen and e.get("unseen"):
-            msg += f"🔵 <b>Od:</b> <b>{escape(e['from'])}</b>\n<b>Predmet:</b> <b>{escape(e['subject'])}</b>\n<b>Dátum:</b> <b>{escape(e['date'])}</b>\n\n"
-        else:
-            msg += f"Od: {escape(e['from'])}\nPredmet: {escape(e['subject'])}\nDátum: {escape(e['date'])}\n\n"
+        prefix = "🔵 " if highlight_unseen and e.get("unseen") else ""
+        msg += f"{prefix}<b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
     return msg
 
 
