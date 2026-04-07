@@ -247,6 +247,24 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"🔔 Pripomienka: {r[1]}")
         mark_done(r[0])
 
+async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(TZ)
+    # Len pracovne dni (Po-Pi) medzi 15:30 a 22:00
+    if now.weekday() >= 5:
+        return
+    if now.hour < 15 or (now.hour == 15 and now.minute < 30) or now.hour >= 22:
+        return
+    try:
+        emails = fetch_emails(count=10, unseen_only=True)
+    except Exception:
+        return
+    if not emails:
+        return
+    msg = f"📧 *Máš {len(emails)} neprečítaných emailov:*\n\n"
+    for e in emails:
+        msg += f"*Od:* {e['from']}\n*Predmet:* {e['subject']}\n*Dátum:* {e['date']}\n\n"
+    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="Markdown")
+
 async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
     reminders = get_todays_reminders()
     if not reminders:
@@ -286,6 +304,7 @@ def main():
     app.add_handler(CommandHandler("e", check_emails))
     app.add_handler(CommandHandler("en", check_new_emails))
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)
+    app.job_queue.run_repeating(check_emails_periodic, interval=3600, first=60)
     app.job_queue.run_daily(morning_summary, time=time(hour=8, minute=0, tzinfo=TZ))
     print("Bot beží...")
     app.run_polling()
