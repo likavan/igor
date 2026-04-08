@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
 from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified
-from emails import fetch_emails, fetch_email_body
+from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -22,7 +22,7 @@ def format_email_list(emails, title, highlight_unseen=False):
         prefix = "🔵 " if highlight_unseen and e.get("unseen") else ""
         msg += f"{prefix}<b>{i+1}.</b> <b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
         cache_key = f"em{i}_{id(emails)}"
-        email_cache[cache_key] = e["message_id"]
+        email_cache[cache_key] = e.get("body", "")
         label = f"{i+1}. {e['subject'][:30]}"
         keyboard.append([InlineKeyboardButton(label, callback_data=cache_key)])
     return msg, keyboard
@@ -292,29 +292,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     raw = query.data
     if raw.startswith("em"):
-        message_id = email_cache.get(raw)
-        if not message_id:
+        body = email_cache.get(raw)
+        if body is None:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
             return
-        try:
-            body = fetch_email_body(message_id)
-            if not body:
-                await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email sa nepodarilo načítať.")
-                return
-            import re
-            if "<html" in body.lower() or "<body" in body.lower():
-                body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
-                body = re.sub(r'<[^>]+>', '', body)
-                body = re.sub(r'\s+', ' ', body).strip()
-            if len(body) > 3500:
-                body = body[:3500] + "\n\n... (skrátené)"
-            await context.bot.send_message(
-                chat_id=YOUR_CHAT_ID,
-                text=f"📩 <b>Email:</b>\n\n{escape(body)}",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"Chyba pri čítaní emailu: {e}")
+        if not body:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email nemá textový obsah.")
+            return
+        import re
+        if "<html" in body.lower() or "<body" in body.lower():
+            body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
+            body = re.sub(r'<[^>]+>', '', body)
+            body = re.sub(r'\s+', ' ', body).strip()
+        if len(body) > 3500:
+            body = body[:3500] + "\n\n... (skrátené)"
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=f"📩 <b>Email:</b>\n\n{escape(body)}",
+            parse_mode="HTML",
+        )
         return
     if raw.startswith("gl"):
         data = gitlab_cache.get(raw)
