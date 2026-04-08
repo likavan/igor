@@ -25,6 +25,11 @@ Natural language conversations in Slovak. Ask anything or trigger actions by jus
 - Automatic hourly check for new emails (workdays 15:30-22:00)
 - Tracks notified emails to avoid duplicate notifications
 
+### Todo list
+- Persistent tasks that stay until marked as done
+- Create, list and complete tasks via natural language or commands
+- Open tasks included in daily morning summary
+
 ### GitLab integration
 - Create issues via natural language ("vytvor task v digitalka - opravit login")
 - Smart project search by keyword with inline keyboard selection
@@ -40,6 +45,8 @@ Natural language conversations in Slovak. Ask anything or trigger actions by jus
 | `/en` | New unread emails (marks as notified) |
 | `/r` | List reminders |
 | `/d N` | Delete reminder by ID |
+| `/t` | List todo tasks |
+| `/td N` | Complete todo by ID |
 | `/h` | Help |
 
 Or just write in natural language - Claude handles the rest.
@@ -49,7 +56,7 @@ Or just write in natural language - Claude handles the rest.
 ```
 bot.py          # Entry point, registers handlers and jobs
 config.py       # Environment variables and constants
-db.py           # SQLite operations (reminders, notified emails)
+db.py           # SQLite operations (reminders, todos, notified emails)
 emails.py       # IMAP email fetching
 gitlab.py       # GitLab API integration
 handlers.py     # Telegram message and callback handlers
