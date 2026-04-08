@@ -12,6 +12,7 @@ from gitlab import search_projects, create_issue, list_my_issues
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
 email_cache = {}
+gitlab_cache = {}
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -140,9 +141,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(msg, parse_mode="HTML")
                 else:
                     keyboard = []
-                    for p in projects:
-                        callback_data = json.dumps({"a": "gi", "p": p["id"], "t": title, "d": description[:100]})
-                        keyboard.append([InlineKeyboardButton(p["name"], callback_data=callback_data)])
+                    for i, p in enumerate(projects):
+                        cache_key = f"gl{i}_{id(projects)}"
+                        gitlab_cache[cache_key] = {"p": p["id"], "t": title, "d": description}
+                        keyboard.append([InlineKeyboardButton(p["name"], callback_data=cache_key)])
                     await update.message.reply_text(
                         f"Našiel som viac projektov pre '<b>{escape(keyword)}</b>'.\nVyber projekt:",
                         parse_mode="HTML",
@@ -314,8 +316,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"Chyba pri čítaní emailu: {e}")
         return
-    data = json.loads(raw)
-    if data["a"] == "gi":
+    if raw.startswith("gl"):
+        data = gitlab_cache.get(raw)
+        if not data:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Výber expiroval, skús znova.")
+            return
         try:
             issue = create_issue(data["p"], data["t"], data.get("d", ""))
             msg = (
