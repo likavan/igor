@@ -5,6 +5,7 @@ from db import init_db
 from handlers import (
     handle_message, handle_callback, help_command,
     list_reminders, delete_reminder,
+    list_todos, todo_done,
     check_emails, check_new_emails,
     check_reminders, check_emails_periodic, morning_summary,
 )
@@ -24,6 +25,8 @@ def main():
     app.add_handler(CommandHandler("emails", check_emails))
     app.add_handler(CommandHandler("e", check_emails))
     app.add_handler(CommandHandler("en", check_new_emails))
+    app.add_handler(CommandHandler("t", list_todos))
+    app.add_handler(CommandHandler("td", todo_done))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)

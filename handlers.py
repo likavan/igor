@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
-from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified
+from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified, add_todo, get_todos, mark_todo_done
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues
 
@@ -68,6 +68,17 @@ Príklady:
 GITLAB|CREATE|digitalka|Opraviť login stránku|Nefunguje prihlásenie cez SSO
 GITLAB|CREATE|eshop|Pridať export objednávok
 GITLAB|ISSUES
+
+TODO:
+TODO|AKCIA
+Akcie:
+- TODO|ADD|text — pridaj novú úlohu
+- TODO|LIST — zobraz otvorené úlohy
+- TODO|DONE|id — označ úlohu ako hotovú
+Príklady:
+TODO|ADD|Opraviť faktúru
+TODO|LIST (keď sa pýta čo má robiť, aké má úlohy, todo list)
+TODO|DONE|3
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -161,6 +172,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(msg, parse_mode="HTML")
         except Exception as e:
             await update.message.reply_text(f"Chyba GitLab: {e}")
+    elif reply.startswith("TODO|"):
+        parts = reply.split("|")
+        action = parts[1].strip()
+        if action == "ADD":
+            text = parts[2].strip()
+            add_todo(text)
+            await update.message.reply_text(f"✅ Úloha pridaná: {text}")
+        elif action == "LIST":
+            todos = get_todos()
+            if not todos:
+                await update.message.reply_text("Nemáš žiadne otvorené úlohy.")
+            else:
+                msg = "📝 <b>Tvoje úlohy:</b>\n\n"
+                for t in todos:
+                    msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
+                await update.message.reply_text(msg, parse_mode="HTML")
+        elif action == "DONE":
+            todo_id = int(parts[2].strip())
+            mark_todo_done(todo_id)
+            await update.message.reply_text("✅ Úloha splnená.")
     else:
         await update.message.reply_text(reply)
 
@@ -181,6 +212,29 @@ async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for row in rows:
         msg += f"• {escape(row[2])} – {escape(row[1])} (id:{row[0]})\n"
     await update.message.reply_text(msg, parse_mode="HTML")
+
+
+async def list_todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    todos = get_todos()
+    if not todos:
+        await update.message.reply_text("Nemáš žiadne otvorené úlohy.")
+        return
+    msg = "📝 <b>Tvoje úlohy:</b>\n\n"
+    for t in todos:
+        msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
+    await update.message.reply_text(msg, parse_mode="HTML")
+
+
+async def todo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Použitie: /td 3")
+        return
+    mark_todo_done(int(context.args[0]))
+    await update.message.reply_text("✅ Úloha splnená.")
 
 
 async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -259,14 +313,22 @@ async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
+    msg = "🌅 Dobré ráno Martin!\n\n"
     reminders = get_todays_reminders()
-    if not reminders:
-        msg = "🌅 Dobré ráno Martin! Dnes nemáš žiadne pripomienky."
-    else:
-        msg = "🌅 Dobré ráno Martin! Dnešné pripomienky:\n\n"
+    if reminders:
+        msg += "<b>📅 Dnešné pripomienky:</b>\n"
         for r in reminders:
             msg += f"• {r[1]} – {r[0]}\n"
-    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg)
+        msg += "\n"
+    todos = get_todos()
+    if todos:
+        msg += "<b>📝 Otvorené úlohy:</b>\n"
+        for t in todos:
+            msg += f"• {t[1]}\n"
+        msg += "\n"
+    if not reminders and not todos:
+        msg += "Dnes nemáš žiadne pripomienky ani úlohy."
+    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,6 +341,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/en — neprečítané emaily\n"
         "/r — zoznam pripomienok\n"
         "/d 3 — zmazať pripomienku č. 3\n"
+        "/t — zoznam úloh\n"
+        "/td 3 — splniť úlohu č. 3\n"
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )

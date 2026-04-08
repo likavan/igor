@@ -15,6 +15,14 @@ def init_db():
         )
     """)
     c.execute("""
+        CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            done INTEGER DEFAULT 0,
+            created_at DATETIME NOT NULL
+        )
+    """)
+    c.execute("""
         CREATE TABLE IF NOT EXISTS notified_emails (
             message_id TEXT PRIMARY KEY,
             notified_at DATETIME NOT NULL
@@ -55,6 +63,31 @@ def mark_done(reminder_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
     c.execute("UPDATE reminders SET done=1 WHERE id=?", (reminder_id,))
+    conn.commit()
+    conn.close()
+
+
+def add_todo(text):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO todos (text, created_at) VALUES (?, ?)", (text, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
+    conn.commit()
+    conn.close()
+
+
+def get_todos():
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT id, text, created_at FROM todos WHERE done=0 ORDER BY created_at")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def mark_todo_done(todo_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE todos SET done=1 WHERE id=?", (todo_id,))
     conn.commit()
     conn.close()
 
