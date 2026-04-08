@@ -51,7 +51,7 @@ def fetch_email_body(message_id):
     mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
     mail.login(IMAP_EMAIL, IMAP_PASSWORD)
     mail.select("INBOX")
-    _, data = mail.search(None, "HEADER", "Message-ID", message_id)
+    _, data = mail.search(None, f'HEADER "Message-ID" "{message_id}"')
     ids = data[0].split()
     if not ids:
         mail.logout()
