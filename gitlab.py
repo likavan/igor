@@ -1,5 +1,5 @@
 import requests
-from config import GITLAB_URL, GITLAB_TOKEN
+from config import GITLAB_URL, GITLAB_TOKEN, GITLAB_USERNAME
 
 HEADERS = {"PRIVATE-TOKEN": GITLAB_TOKEN}
 _user_id = None
@@ -8,9 +8,11 @@ _user_id = None
 def get_my_user_id():
     global _user_id
     if _user_id is None:
-        resp = requests.get(f"{GITLAB_URL}/api/v4/user", headers=HEADERS)
+        resp = requests.get(f"{GITLAB_URL}/api/v4/users", headers=HEADERS, params={"username": GITLAB_USERNAME})
         resp.raise_for_status()
-        _user_id = resp.json()["id"]
+        users = resp.json()
+        if users:
+            _user_id = users[0]["id"]
     return _user_id
 
 
