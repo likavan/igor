@@ -42,11 +42,15 @@ async def ask_claude(user_message):
 Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte a nič iné:
 
 PRIPOMIENKA:
-REMINDER|DEŇ|HH:MM|text
+REMINDER|AKCIA
+Akcie:
+- REMINDER|DEŇ|HH:MM|text — pridaj pripomienku
+- REMINDER|LIST — zobraz zoznam pripomienok
 DEŇ môže byť LEN: dnes, zajtra, pozajtra, pondelok, utorok, streda, štvrtok, piatok, sobota, nedeľa
 Príklady:
 REMINDER|zajtra|08:30|Porada
 REMINDER|pondelok|14:00|Odoslať faktúru
+REMINDER|LIST (keď sa pýta na pripomienky, čo má naplánované)
 
 EMAILY:
 EMAIL|AKCIA
@@ -96,7 +100,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply = await ask_claude(user_message)
     if reply.startswith("REMINDER|"):
         parts = reply.split("|")
-        day_str = parts[1].strip()
+        action = parts[1].strip()
+        if action == "LIST":
+            import sqlite3
+            conn = sqlite3.connect("assistant.db")
+            c = conn.cursor()
+            c.execute("SELECT id, text, remind_at FROM reminders WHERE done=0 ORDER BY remind_at")
+            rows = c.fetchall()
+            conn.close()
+            if not rows:
+                await update.message.reply_text("Žiadne pripomienky.")
+            else:
+                msg = "📋 <b>Tvoje pripomienky:</b>\n\n"
+                for row in rows:
+                    msg += f"• {escape(row[2])} – {escape(row[1])} (id:{row[0]})\n"
+                await update.message.reply_text(msg, parse_mode="HTML")
+            return
+        day_str = action
         time_str = parts[2].strip()
         text = parts[3].strip()
         remind_at = parse_relative_datetime(day_str, time_str)
