@@ -1,5 +1,5 @@
 import json
-from html import escape
+from html import escape, unescape
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
@@ -437,6 +437,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             body = re.sub(r'</tr>', '\n', body, flags=re.IGNORECASE)
             body = re.sub(r'</li>', '\n', body, flags=re.IGNORECASE)
             body = re.sub(r'<[^>]+>', '', body)
+            body = unescape(body)
             body = re.sub(r'[ \t]+', ' ', body)
             body = re.sub(r'\n ', '\n', body)
             body = re.sub(r'\n{3,}', '\n\n', body)
