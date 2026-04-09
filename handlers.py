@@ -22,7 +22,7 @@ def format_email_list(emails, title, highlight_unseen=False):
         prefix = "🔵 " if highlight_unseen and e.get("unseen") else ""
         msg += f"{prefix}<b>{i+1}.</b> <b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
         cache_key = f"em{i}_{id(emails)}"
-        email_cache[cache_key] = e.get("body", "")
+        email_cache[cache_key] = {"body": e.get("body", ""), "from": e["from"], "subject": e["subject"], "date": e["date"]}
         label = f"{i+1}. {e['subject'][:30]}"
         keyboard.append([InlineKeyboardButton(label, callback_data=cache_key)])
     return msg, keyboard
@@ -419,23 +419,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     raw = query.data
     if raw.startswith("em"):
-        body = email_cache.get(raw)
-        if body is None:
+        cached = email_cache.get(raw)
+        if cached is None:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
             return
+        body = cached["body"]
         if not body:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email nemá textový obsah.")
             return
         import re
         if "<html" in body.lower() or "<body" in body.lower():
             body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
+            body = re.sub(r'<script[^>]*>.*?</script>', '', body, flags=re.DOTALL)
+            body = re.sub(r'<br\s*/?>', '\n', body, flags=re.IGNORECASE)
+            body = re.sub(r'</p>', '\n\n', body, flags=re.IGNORECASE)
+            body = re.sub(r'</div>', '\n', body, flags=re.IGNORECASE)
+            body = re.sub(r'</tr>', '\n', body, flags=re.IGNORECASE)
+            body = re.sub(r'</li>', '\n', body, flags=re.IGNORECASE)
             body = re.sub(r'<[^>]+>', '', body)
-            body = re.sub(r'\s+', ' ', body).strip()
+            body = re.sub(r'[ \t]+', ' ', body)
+            body = re.sub(r'\n ', '\n', body)
+            body = re.sub(r'\n{3,}', '\n\n', body)
+            body = body.strip()
         if len(body) > 3500:
             body = body[:3500] + "\n\n... (skrátené)"
+        header = (
+            f"📩 <b>{escape(cached['subject'])}</b>\n"
+            f"<b>Od:</b> {escape(cached['from'])}\n"
+            f"<b>Dátum:</b> {escape(cached['date'])}\n"
+            f"{'─' * 20}\n\n"
+        )
         await context.bot.send_message(
             chat_id=YOUR_CHAT_ID,
-            text=f"📩 <b>Email:</b>\n\n{escape(body)}",
+            text=header + escape(body),
             parse_mode="HTML",
         )
         return
