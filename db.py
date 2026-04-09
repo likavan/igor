@@ -19,9 +19,14 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             text TEXT NOT NULL,
             done INTEGER DEFAULT 0,
-            created_at DATETIME NOT NULL
+            created_at DATETIME NOT NULL,
+            done_at DATETIME
         )
     """)
+    try:
+        c.execute("ALTER TABLE todos ADD COLUMN done_at DATETIME")
+    except sqlite3.OperationalError:
+        pass
     c.execute("""
         CREATE TABLE IF NOT EXISTS notified_emails (
             message_id TEXT PRIMARY KEY,
@@ -79,7 +84,8 @@ def get_todos(include_done=False):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
     if include_done:
-        c.execute("SELECT id, text, created_at, done FROM todos ORDER BY done, created_at")
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
+        c.execute("SELECT id, text, created_at, done FROM todos WHERE done=0 OR done_at LIKE ? ORDER BY done, created_at", (f"{today}%",))
     else:
         c.execute("SELECT id, text, created_at, done FROM todos WHERE done=0 ORDER BY created_at")
     rows = c.fetchall()
@@ -90,7 +96,7 @@ def get_todos(include_done=False):
 def mark_todo_done(todo_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
-    c.execute("UPDATE todos SET done=1 WHERE id=?", (todo_id,))
+    c.execute("UPDATE todos SET done=1, done_at=? WHERE id=?", (datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), todo_id))
     conn.commit()
     conn.close()
 

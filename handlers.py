@@ -15,6 +15,28 @@ email_cache = {}
 gitlab_cache = {}
 
 
+def format_todo_list(todos):
+    msg = "📝 <b>Tvoje úlohy:</b>\n\n"
+    now = datetime.now(TZ)
+    for t in todos:
+        if t[3]:
+            msg += f"<s>{escape(t[1])}</s>\n"
+        else:
+            try:
+                created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
+                days = (now - created.replace(tzinfo=TZ)).days
+            except Exception:
+                days = 0
+            if days > 10:
+                icon = "🔴"
+            elif days > 5:
+                icon = "🟠"
+            else:
+                icon = "🟢"
+            msg += f"{icon} {escape(t[1])} <i>({days}d, id:{t[0]})</i>\n"
+    return msg
+
+
 def format_email_list(emails, title, highlight_unseen=False):
     msg = f"📧 <b>{escape(title)}</b>\n\n"
     keyboard = []
@@ -208,13 +230,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not todos:
                 await update.message.reply_text("Nemáš žiadne úlohy.")
             else:
-                msg = "📝 <b>Tvoje úlohy:</b>\n\n"
-                for t in todos:
-                    if t[3]:
-                        msg += f"✅ <s>{escape(t[1])}</s> <i>(id:{t[0]})</i>\n"
-                    else:
-                        msg += f"⬜ {escape(t[1])} <i>(id:{t[0]})</i>\n"
-                await update.message.reply_text(msg, parse_mode="HTML")
+                await update.message.reply_text(format_todo_list(todos), parse_mode="HTML")
         elif action == "DELETE":
             todo_id = int(parts[2].strip())
             delete_todo(todo_id)
@@ -257,13 +273,7 @@ async def list_todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not todos:
         await update.message.reply_text("Nemáš žiadne úlohy.")
         return
-    msg = "📝 <b>Tvoje úlohy:</b>\n\n"
-    for t in todos:
-        if t[3]:
-            msg += f"✅ <s>{escape(t[1])}</s> <i>(id:{t[0]})</i>\n"
-        else:
-            msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
-    await update.message.reply_text(msg, parse_mode="HTML")
+    await update.message.reply_text(format_todo_list(todos), parse_mode="HTML")
 
 
 async def todo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
