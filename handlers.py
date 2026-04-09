@@ -213,7 +213,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if t[3]:
                         msg += f"✅ <s>{escape(t[1])}</s> <i>(id:{t[0]})</i>\n"
                     else:
-                        msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
+                        msg += f"☐ {escape(t[1])} <i>(id:{t[0]})</i>\n"
                 await update.message.reply_text(msg, parse_mode="HTML")
         elif action == "DELETE":
             todo_id = int(parts[2].strip())
