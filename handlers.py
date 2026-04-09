@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
-from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified, add_todo, get_todos, mark_todo_done
+from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified, add_todo, get_todos, mark_todo_done, edit_todo
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues
 
@@ -37,7 +37,7 @@ async def ask_claude(user_message):
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1000,
-        system="""Si osobný asistent Martina. Komunikuješ po slovensky, si stručný a praktický.
+        system="""Si Igor, osobný asistent Martina. Tvoje meno je Igor. Komunikuješ po slovensky, si stručný a praktický.
 
 Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte a nič iné:
 
@@ -79,10 +79,12 @@ Akcie:
 - TODO|ADD|text — pridaj novú úlohu
 - TODO|LIST — zobraz otvorené úlohy
 - TODO|DONE|id — označ úlohu ako hotovú
+- TODO|EDIT|id|nový text — uprav text úlohy
 Príklady:
 TODO|ADD|Opraviť faktúru
 TODO|LIST (keď sa pýta čo má robiť, aké má úlohy, todo list)
 TODO|DONE|3
+TODO|EDIT|3|Opraviť faktúru do piatku
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -212,6 +214,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             todo_id = int(parts[2].strip())
             mark_todo_done(todo_id)
             await update.message.reply_text("✅ Úloha splnená.")
+        elif action == "EDIT":
+            todo_id = int(parts[2].strip())
+            new_text = parts[3].strip()
+            edit_todo(todo_id, new_text)
+            await update.message.reply_text(f"✏️ Úloha {todo_id} upravená: {new_text}")
     else:
         await update.message.reply_text(reply)
 
@@ -255,6 +262,18 @@ async def todo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     mark_todo_done(int(context.args[0]))
     await update.message.reply_text("✅ Úloha splnená.")
+
+
+async def todo_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Použitie: /te 3 Nový text úlohy")
+        return
+    todo_id = int(context.args[0])
+    new_text = " ".join(context.args[1:])
+    edit_todo(todo_id, new_text)
+    await update.message.reply_text(f"✏️ Úloha {todo_id} upravená: {new_text}")
 
 
 async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,6 +382,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/d 3 — zmazať pripomienku č. 3\n"
         "/t — zoznam úloh\n"
         "/td 3 — splniť úlohu č. 3\n"
+        "/te 3 Nový text — upraviť úlohu č. 3\n"
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )

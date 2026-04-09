@@ -92,6 +92,14 @@ def mark_todo_done(todo_id):
     conn.close()
 
 
+def edit_todo(todo_id, new_text):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE todos SET text=? WHERE id=?", (new_text, todo_id))
+    conn.commit()
+    conn.close()
+
+
 def is_email_notified(message_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
