@@ -19,20 +19,20 @@ def format_todo_list(todos):
     msg = "📝 <b>Tvoje úlohy:</b>\n\n"
     now = datetime.now(TZ)
     for t in todos:
-        if t[3]:
-            msg += f"<s>{escape(t[1])}</s>\n"
+        try:
+            created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
+            days = (now - created.replace(tzinfo=TZ)).days
+        except Exception:
+            days = 0
+        if days > 10:
+            icon = "🔴"
+        elif days > 5:
+            icon = "🟠"
         else:
-            try:
-                created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
-                days = (now - created.replace(tzinfo=TZ)).days
-            except Exception:
-                days = 0
-            if days > 10:
-                icon = "🔴"
-            elif days > 5:
-                icon = "🟠"
-            else:
-                icon = "🟢"
+            icon = "🟢"
+        if t[3]:
+            msg += f"{icon} <s>{escape(t[1])}</s> <i>({days}d, id:{t[0]})</i>\n"
+        else:
             msg += f"{icon} {escape(t[1])} <i>({days}d, id:{t[0]})</i>\n"
     return msg
 
