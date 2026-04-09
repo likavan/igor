@@ -88,11 +88,13 @@ EMAIL|NEW (keď sa pýta na nové/neprečítané emaily)
 GITLAB:
 GITLAB|AKCIA|parametre
 Akcie:
-- GITLAB|CREATE|kľúčové_slovo_projektu|názov_tasku|popis (popis je voliteľný)
+- GITLAB|CREATE|kľúčové_slovo_projektu|názov_tasku|popis|estimate (popis a estimate sú voliteľné)
 - GITLAB|ISSUES — zobraz moje otvorené issues
+estimate je vo formáte GitLab: 30m, 1h, 2h, 1d, atď.
 Príklady:
-GITLAB|CREATE|digitalka|Opraviť login stránku|Nefunguje prihlásenie cez SSO
-GITLAB|CREATE|eshop|Pridať export objednávok
+GITLAB|CREATE|digitalka|Opraviť login stránku|Nefunguje prihlásenie cez SSO|2h
+GITLAB|CREATE|eshop|Pridať export objednávok||4h
+GITLAB|CREATE|web|Zmeniť farbu tlačidla
 GITLAB|ISSUES
 
 TODO:
@@ -182,25 +184,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyword = parts[2].strip()
                 title = parts[3].strip()
                 description = parts[4].strip() if len(parts) > 4 else ""
+                estimate = parts[5].strip() if len(parts) > 5 else ""
                 projects = search_projects(keyword)
                 if not projects:
                     await update.message.reply_text(f"Nenašiel som projekt pre '{keyword}'.")
                     return
                 if len(projects) == 1:
                     project = projects[0]
-                    issue = create_issue(project["id"], title, description)
-                    msg = (
-                        f"✅ Issue vytvorený:\n"
-                        f"<b>Projekt:</b> {escape(project['name'])}\n"
-                        f"<b>#{issue['id']}:</b> {escape(issue['title'])}\n"
-                        f"<a href=\"{issue['url']}\">Otvoriť v GitLab</a>"
-                    )
+                    issue = create_issue(project["id"], title, description, estimate)
+                    msg = f"✅ Issue vytvorený:\n<b>Projekt:</b> {escape(project['name'])}\n<b>#{issue['id']}:</b> {escape(issue['title'])}\n"
+                    if issue.get("estimate"):
+                        msg += f"<b>Estimate:</b> {escape(issue['estimate'])}\n"
+                    msg += f"<a href=\"{issue['url']}\">Otvoriť v GitLab</a>"
                     await update.message.reply_text(msg, parse_mode="HTML")
                 else:
                     keyboard = []
                     for i, p in enumerate(projects):
                         cache_key = f"gl{i}_{id(projects)}"
-                        gitlab_cache[cache_key] = {"p": p["id"], "t": title, "d": description}
+                        gitlab_cache[cache_key] = {"p": p["id"], "t": title, "d": description, "e": estimate}
                         keyboard.append([InlineKeyboardButton(p["name"], callback_data=cache_key)])
                     await update.message.reply_text(
                         f"Našiel som viac projektov pre '<b>{escape(keyword)}</b>'.\nVyber projekt:",
@@ -472,12 +473,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Výber expiroval, skús znova.")
             return
         try:
-            issue = create_issue(data["p"], data["t"], data.get("d", ""))
-            msg = (
-                f"✅ Issue vytvorený:\n"
-                f"<b>#{issue['id']}:</b> {escape(issue['title'])}\n"
-                f"<a href=\"{issue['url']}\">Otvoriť v GitLab</a>"
-            )
+            issue = create_issue(data["p"], data["t"], data.get("d", ""), data.get("e", ""))
+            msg = f"✅ Issue vytvorený:\n<b>#{issue['id']}:</b> {escape(issue['title'])}\n"
+            if issue.get("estimate"):
+                msg += f"<b>Estimate:</b> {escape(issue['estimate'])}\n"
+            msg += f"<a href=\"{issue['url']}\">Otvoriť v GitLab</a>"
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")

@@ -26,7 +26,7 @@ def search_projects(keyword):
     return [{"id": p["id"], "name": p["name_with_namespace"], "web_url": p["web_url"]} for p in resp.json()]
 
 
-def create_issue(project_id, title, description=""):
+def create_issue(project_id, title, description="", estimate=""):
     params = {"title": title, "assignee_ids": [get_my_user_id()]}
     if description:
         params["description"] = description
@@ -37,7 +37,15 @@ def create_issue(project_id, title, description=""):
     )
     resp.raise_for_status()
     issue = resp.json()
-    return {"id": issue["iid"], "title": issue["title"], "url": issue["web_url"]}
+    result = {"id": issue["iid"], "title": issue["title"], "url": issue["web_url"]}
+    if estimate:
+        requests.post(
+            f"{GITLAB_URL}/api/v4/projects/{project_id}/issues/{issue['iid']}/time_estimate",
+            headers=HEADERS,
+            json={"duration": estimate},
+        )
+        result["estimate"] = estimate
+    return result
 
 
 def list_my_issues(state="opened"):
