@@ -126,6 +126,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_claude(user_message)
+    is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|"))
+    if is_action:
+        conversation_history.clear()
     if reply.startswith("REMINDER|"):
         parts = reply.split("|")
         action = parts[1].strip()
