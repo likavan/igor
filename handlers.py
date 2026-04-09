@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
-from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified, add_todo, get_todos, mark_todo_done, edit_todo
+from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified, add_todo, get_todos, mark_todo_done, delete_todo, edit_todo
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues
 
@@ -77,13 +77,15 @@ TODO:
 TODO|AKCIA
 Akcie:
 - TODO|ADD|text — pridaj novú úlohu
-- TODO|LIST — zobraz otvorené úlohy
+- TODO|LIST — zobraz otvorené úlohy (aj hotové)
 - TODO|DONE|id — označ úlohu ako hotovú
+- TODO|DELETE|id — vymaž úlohu
 - TODO|EDIT|id|nový text — uprav text úlohy
 Príklady:
 TODO|ADD|Opraviť faktúru
 TODO|LIST (keď sa pýta čo má robiť, aké má úlohy, todo list)
 TODO|DONE|3
+TODO|DELETE|3
 TODO|EDIT|3|Opraviť faktúru do piatku
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
@@ -202,14 +204,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_todo(text)
             await update.message.reply_text(f"✅ Úloha pridaná: {text}")
         elif action == "LIST":
-            todos = get_todos()
+            todos = get_todos(include_done=True)
             if not todos:
-                await update.message.reply_text("Nemáš žiadne otvorené úlohy.")
+                await update.message.reply_text("Nemáš žiadne úlohy.")
             else:
                 msg = "📝 <b>Tvoje úlohy:</b>\n\n"
                 for t in todos:
-                    msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
+                    if t[3]:
+                        msg += f"✅ <s>{escape(t[1])}</s> <i>(id:{t[0]})</i>\n"
+                    else:
+                        msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
                 await update.message.reply_text(msg, parse_mode="HTML")
+        elif action == "DELETE":
+            todo_id = int(parts[2].strip())
+            delete_todo(todo_id)
+            await update.message.reply_text("🗑️ Úloha vymazaná.")
         elif action == "DONE":
             todo_id = int(parts[2].strip())
             mark_todo_done(todo_id)
@@ -244,13 +253,16 @@ async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def list_todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
-    todos = get_todos()
+    todos = get_todos(include_done=True)
     if not todos:
-        await update.message.reply_text("Nemáš žiadne otvorené úlohy.")
+        await update.message.reply_text("Nemáš žiadne úlohy.")
         return
     msg = "📝 <b>Tvoje úlohy:</b>\n\n"
     for t in todos:
-        msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
+        if t[3]:
+            msg += f"✅ <s>{escape(t[1])}</s> <i>(id:{t[0]})</i>\n"
+        else:
+            msg += f"• {escape(t[1])} <i>(id:{t[0]})</i>\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
 
@@ -262,6 +274,16 @@ async def todo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     mark_todo_done(int(context.args[0]))
     await update.message.reply_text("✅ Úloha splnená.")
+
+
+async def todo_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Použitie: /tx 3")
+        return
+    delete_todo(int(context.args[0]))
+    await update.message.reply_text("🗑️ Úloha vymazaná.")
 
 
 async def todo_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -383,6 +405,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/t — zoznam úloh\n"
         "/td 3 — splniť úlohu č. 3\n"
         "/te 3 Nový text — upraviť úlohu č. 3\n"
+        "/tx 3 — vymazať úlohu č. 3\n"
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )

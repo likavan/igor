@@ -75,10 +75,13 @@ def add_todo(text):
     conn.close()
 
 
-def get_todos():
+def get_todos(include_done=False):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
-    c.execute("SELECT id, text, created_at FROM todos WHERE done=0 ORDER BY created_at")
+    if include_done:
+        c.execute("SELECT id, text, created_at, done FROM todos ORDER BY done, created_at")
+    else:
+        c.execute("SELECT id, text, created_at, done FROM todos WHERE done=0 ORDER BY created_at")
     rows = c.fetchall()
     conn.close()
     return rows
@@ -88,6 +91,14 @@ def mark_todo_done(todo_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
     c.execute("UPDATE todos SET done=1 WHERE id=?", (todo_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_todo(todo_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM todos WHERE id=?", (todo_id,))
     conn.commit()
     conn.close()
 
