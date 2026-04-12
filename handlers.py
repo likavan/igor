@@ -45,7 +45,7 @@ def format_todo_list(todos):
 
 
 def format_project_detail(project, subtasks):
-    msg = f"📂 <b>{escape(project[1])}</b>\n\n"
+    msg = f"📂 <b>{escape(project[1])}</b> <i>(id:{project[0]})</i>\n\n"
     if not subtasks:
         msg += "<i>Žiadne podúlohy.</i>"
         return msg, []
