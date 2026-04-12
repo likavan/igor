@@ -245,6 +245,14 @@ def mark_subtask_done(subtask_id):
     conn.close()
 
 
+def edit_subtask_text(subtask_id, new_text):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE subtasks SET text=? WHERE id=?", (new_text, subtask_id))
+    conn.commit()
+    conn.close()
+
+
 def edit_subtask_notes(subtask_id, notes):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()

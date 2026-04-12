@@ -10,7 +10,7 @@ from db import (
     is_email_notified, mark_email_notified,
     add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
     create_project, get_projects, delete_project, add_subtask, get_subtasks, get_subtask,
-    mark_subtask_done, edit_subtask_notes, delete_subtask, get_project_by_id,
+    mark_subtask_done, edit_subtask_text, edit_subtask_notes, delete_subtask, get_project_by_id,
 )
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues
@@ -115,10 +115,11 @@ Dostupné akcie:
 
 5) PROJECT|CREATE|názov — vytvor projekt
    PROJECT|ADD|id_projektu|názov podúlohy|poznámka — pridaj podúlohu (poznámka voliteľná)
+   PROJECT|EDIT_TASK|id_podúlohy|nový text — uprav text podúlohy
    PROJECT|LIST — zobraz projekty
    PROJECT|SHOW|id_projektu — detail projektu
    PROJECT|DELETE|id_projektu — vymaž projekt
-   Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|SHOW|1
+   Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|EDIT_TASK|2|Napísať hromadný mail   PROJECT|SHOW|1
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -289,6 +290,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             project = get_project_by_id(project_id)
             pname = escape(project[1]) if project else f"#{project_id}"
             await update.message.reply_text(f"✅ Podúloha pridaná do <b>{pname}</b>: {escape(text)} (id:{subtask_id})", parse_mode="HTML")
+        elif action == "EDIT_TASK":
+            subtask_id = int(parts[2].strip())
+            new_text = parts[3].strip()
+            edit_subtask_text(subtask_id, new_text)
+            subtask = get_subtask(subtask_id)
+            if subtask:
+                project = get_project_by_id(subtask[1])
+                subtasks = get_subtasks(subtask[1])
+                msg, keyboard = format_project_detail(project, subtasks)
+                markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+            else:
+                await update.message.reply_text(f"✏️ Podúloha {subtask_id} upravená: {new_text}")
         elif action == "LIST":
             projects = get_projects()
             if not projects:
