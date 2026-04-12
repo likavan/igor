@@ -1,11 +1,17 @@
 import json
 from html import escape, unescape
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.ext import ContextTypes, CallbackQueryHandler
 import anthropic
 from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
-from db import add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime, is_email_notified, mark_email_notified, add_todo, get_todos, mark_todo_done, delete_todo, edit_todo
+from db import (
+    add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime,
+    is_email_notified, mark_email_notified,
+    add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
+    create_project, get_projects, delete_project, add_subtask, get_subtasks, get_subtask,
+    mark_subtask_done, edit_subtask_notes, delete_subtask, get_project_by_id,
+)
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues
 
@@ -13,6 +19,7 @@ anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
 email_cache = {}
 gitlab_cache = {}
+pending_edit = {}
 
 
 def format_todo_list(todos):
@@ -35,6 +42,27 @@ def format_todo_list(todos):
         else:
             msg += f"{icon} {escape(t[1])} <i>({days}d, id:{t[0]})</i>\n"
     return msg
+
+
+def format_project_detail(project, subtasks):
+    msg = f"📂 <b>{escape(project[1])}</b>\n\n"
+    if not subtasks:
+        msg += "<i>Žiadne podúlohy.</i>"
+        return msg, []
+    keyboard = []
+    for s in subtasks:
+        icon = "✅" if s[2] else "⬜"
+        msg += f"{icon} {escape(s[1])}"
+        if s[3]:
+            msg += f"\n   📝 <i>{escape(s[3])}</i>"
+        msg += f" <i>(id:{s[0]})</i>\n"
+        if not s[2]:
+            keyboard.append([
+                InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{s[0]}"),
+                InlineKeyboardButton("✏️ Poznámka", callback_data=f"pt_edit_{s[0]}"),
+                InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{s[0]}"),
+            ])
+    return msg, keyboard
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -112,6 +140,22 @@ TODO|DONE|3
 TODO|DELETE|3
 TODO|EDIT|3|Opraviť faktúru do piatku
 
+PROJEKTY:
+PROJECT|AKCIA|parametre
+Akcie:
+- PROJECT|CREATE|názov projektu — vytvor nový projekt
+- PROJECT|ADD|id_projektu|názov podúlohy|poznámka (poznámka je voliteľná)
+- PROJECT|LIST — zobraz všetky projekty
+- PROJECT|SHOW|id_projektu — zobraz detail projektu s podúlohami
+- PROJECT|DELETE|id_projektu — vymaž projekt
+Príklady:
+PROJECT|CREATE|Redizajn webu
+PROJECT|ADD|1|Návrh wireframe|Použiť Figmu
+PROJECT|ADD|1|Implementácia headeru
+PROJECT|LIST (keď sa pýta na projekty)
+PROJECT|SHOW|1 (keď chce vidieť detail projektu)
+PROJECT|DELETE|1
+
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
     )
@@ -124,9 +168,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     user_message = update.message.text
+    if update.message.reply_to_message and YOUR_CHAT_ID in pending_edit:
+        subtask_id = pending_edit.pop(YOUR_CHAT_ID)
+        edit_subtask_notes(subtask_id, user_message)
+        subtask = get_subtask(subtask_id)
+        if subtask:
+            project = get_project_by_id(subtask[1])
+            subtasks = get_subtasks(subtask[1])
+            msg, keyboard = format_project_detail(project, subtasks)
+            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+        else:
+            await update.message.reply_text("✏️ Poznámka uložená.")
+        return
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_claude(user_message)
-    is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|"))
+    is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|"))
     if is_action:
         conversation_history.clear()
     if reply.startswith("REMINDER|"):
@@ -248,6 +305,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_text = parts[3].strip()
             edit_todo(todo_id, new_text)
             await update.message.reply_text(f"✏️ Úloha {todo_id} upravená: {new_text}")
+    elif reply.startswith("PROJECT|"):
+        parts = reply.split("|")
+        action = parts[1].strip()
+        if action == "CREATE":
+            name = parts[2].strip()
+            project_id = create_project(name)
+            await update.message.reply_text(f"📂 Projekt vytvorený: <b>{escape(name)}</b> (id:{project_id})", parse_mode="HTML")
+        elif action == "ADD":
+            project_id = int(parts[2].strip())
+            text = parts[3].strip()
+            notes = parts[4].strip() if len(parts) > 4 else ""
+            subtask_id = add_subtask(project_id, text, notes)
+            project = get_project_by_id(project_id)
+            pname = escape(project[1]) if project else f"#{project_id}"
+            await update.message.reply_text(f"✅ Podúloha pridaná do <b>{pname}</b>: {escape(text)} (id:{subtask_id})", parse_mode="HTML")
+        elif action == "LIST":
+            projects = get_projects()
+            if not projects:
+                await update.message.reply_text("Nemáš žiadne projekty.")
+            else:
+                msg = "📂 <b>Tvoje projekty:</b>\n\n"
+                for p in projects:
+                    subtasks = get_subtasks(p[0])
+                    done = sum(1 for s in subtasks if s[2])
+                    total = len(subtasks)
+                    msg += f"• <b>{escape(p[1])}</b> ({done}/{total}) <i>(id:{p[0]})</i>\n"
+                await update.message.reply_text(msg, parse_mode="HTML")
+        elif action == "SHOW":
+            project_id = int(parts[2].strip())
+            project = get_project_by_id(project_id)
+            if not project:
+                await update.message.reply_text("Projekt neexistuje.")
+            else:
+                subtasks = get_subtasks(project_id)
+                msg, keyboard = format_project_detail(project, subtasks)
+                markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+        elif action == "DELETE":
+            project_id = int(parts[2].strip())
+            delete_project(project_id)
+            await update.message.reply_text("🗑️ Projekt vymazaný.")
     else:
         await update.message.reply_text(reply)
 
@@ -310,6 +408,33 @@ async def todo_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_text = " ".join(context.args[1:])
     edit_todo(todo_id, new_text)
     await update.message.reply_text(f"✏️ Úloha {todo_id} upravená: {new_text}")
+
+
+async def list_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    if context.args:
+        project_id = int(context.args[0])
+        project = get_project_by_id(project_id)
+        if not project:
+            await update.message.reply_text("Projekt neexistuje.")
+            return
+        subtasks = get_subtasks(project_id)
+        msg, keyboard = format_project_detail(project, subtasks)
+        markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+        return
+    projects = get_projects()
+    if not projects:
+        await update.message.reply_text("Nemáš žiadne projekty.")
+        return
+    msg = "📂 <b>Tvoje projekty:</b>\n\n"
+    for p in projects:
+        subtasks = get_subtasks(p[0])
+        done = sum(1 for s in subtasks if s[2])
+        total = len(subtasks)
+        msg += f"• <b>{escape(p[1])}</b> ({done}/{total}) <i>(id:{p[0]})</i>\n"
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -420,6 +545,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/td 3 — splniť úlohu č. 3\n"
         "/te 3 Nový text — upraviť úlohu č. 3\n"
         "/tx 3 — vymazať úlohu č. 3\n"
+        "/p — zoznam projektov\n"
+        "/p 1 — detail projektu č. 1\n"
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )
@@ -484,3 +611,42 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
+    if raw.startswith("pt_done_"):
+        subtask_id = int(raw.split("_")[-1])
+        mark_subtask_done(subtask_id)
+        subtask = get_subtask(subtask_id)
+        if subtask:
+            project = get_project_by_id(subtask[1])
+            subtasks = get_subtasks(subtask[1])
+            msg, keyboard = format_project_detail(project, subtasks)
+            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=markup)
+        else:
+            await query.edit_message_text("✅ Podúloha splnená.")
+    elif raw.startswith("pt_del_"):
+        subtask_id = int(raw.split("_")[-1])
+        subtask = get_subtask(subtask_id)
+        if subtask:
+            project_id = subtask[1]
+            delete_subtask(subtask_id)
+            project = get_project_by_id(project_id)
+            subtasks = get_subtasks(project_id)
+            msg, keyboard = format_project_detail(project, subtasks)
+            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=markup)
+        else:
+            await query.edit_message_text("🗑️ Podúloha vymazaná.")
+    elif raw.startswith("pt_edit_"):
+        subtask_id = int(raw.split("_")[-1])
+        subtask = get_subtask(subtask_id)
+        if not subtask:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Podúloha neexistuje.")
+            return
+        pending_edit[YOUR_CHAT_ID] = subtask_id
+        current_notes = subtask[4] or ""
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=f"✏️ Uprav poznámku pre: <b>{escape(subtask[2])}</b>",
+            parse_mode="HTML",
+            reply_markup=ForceReply(input_field_placeholder=current_notes if current_notes else "Poznámka..."),
+        )

@@ -28,6 +28,24 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     c.execute("""
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at DATETIME NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS subtasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            done INTEGER DEFAULT 0,
+            notes TEXT DEFAULT '',
+            created_at DATETIME NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+    """)
+    c.execute("""
         CREATE TABLE IF NOT EXISTS notified_emails (
             message_id TEXT PRIMARY KEY,
             notified_at DATETIME NOT NULL
@@ -158,3 +176,95 @@ def parse_relative_datetime(day_str, time_str):
     else:
         return None
     return target
+
+
+# --- Projects ---
+
+def create_project(name):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO projects (name, created_at) VALUES (?, ?)", (name, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
+    project_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return project_id
+
+
+def get_projects():
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT id, name, created_at FROM projects ORDER BY created_at")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def delete_project(project_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM subtasks WHERE project_id=?", (project_id,))
+    c.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    conn.commit()
+    conn.close()
+
+
+def add_subtask(project_id, text, notes=""):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO subtasks (project_id, text, notes, created_at) VALUES (?, ?, ?, ?)",
+              (project_id, text, notes, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
+    subtask_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return subtask_id
+
+
+def get_subtasks(project_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT id, text, done, notes FROM subtasks WHERE project_id=? ORDER BY id", (project_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def get_subtask(subtask_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT id, project_id, text, done, notes FROM subtasks WHERE id=?", (subtask_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def mark_subtask_done(subtask_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE subtasks SET done=1 WHERE id=?", (subtask_id,))
+    conn.commit()
+    conn.close()
+
+
+def edit_subtask_notes(subtask_id, notes):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE subtasks SET notes=? WHERE id=?", (notes, subtask_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_subtask(subtask_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM subtasks WHERE id=?", (subtask_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_project_by_id(project_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT id, name, created_at FROM projects WHERE id=?", (project_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
