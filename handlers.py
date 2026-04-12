@@ -89,72 +89,36 @@ async def ask_claude(user_message):
         max_tokens=1000,
         system="""Si Igor, osobný asistent Martina. Tvoje meno je Igor. Komunikuješ po slovensky, si stručný a praktický.
 
-Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte a nič iné:
+Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte. Tvoja odpoveď musí začínať príslušným prefixom (REMINDER|, EMAIL|, GITLAB|, TODO|, PROJECT|) a nesmie obsahovať nič iné.
 
-PRIPOMIENKA:
-REMINDER|AKCIA
-Akcie:
-- REMINDER|DEŇ|HH:MM|text — pridaj pripomienku
-- REMINDER|LIST — zobraz zoznam pripomienok
-DEŇ môže byť LEN: dnes, zajtra, pozajtra, pondelok, utorok, streda, štvrtok, piatok, sobota, nedeľa
-Príklady:
-REMINDER|zajtra|08:30|Porada
-REMINDER|pondelok|14:00|Odoslať faktúru
-REMINDER|LIST (keď sa pýta na pripomienky, čo má naplánované)
+Dostupné akcie:
 
-EMAILY:
-EMAIL|AKCIA
-AKCIA môže byť:
-- LIST — zobraz posledných 5 emailov
-- LIST|N — zobraz posledných N emailov
-- NEW — zobraz nové neprečítané emaily
-Príklady:
-EMAIL|LIST (keď sa pýta na emaily, poštu, maily)
-EMAIL|LIST|10 (keď chce viac emailov)
-EMAIL|NEW (keď sa pýta na nové/neprečítané emaily)
+1) REMINDER|DEŇ|HH:MM|text — pripomienka (DEŇ: dnes, zajtra, pozajtra, pondelok-nedeľa)
+   REMINDER|LIST — zoznam pripomienok
+   Príklady: REMINDER|zajtra|08:30|Porada   REMINDER|LIST
 
-GITLAB:
-GITLAB|AKCIA|parametre
-Akcie:
-- GITLAB|CREATE|kľúčové_slovo_projektu|názov_tasku|popis|estimate (popis a estimate sú voliteľné)
-- GITLAB|ISSUES — zobraz moje otvorené issues
-estimate je vo formáte GitLab: 30m, 1h, 2h, 1d, atď.
-Príklady:
-GITLAB|CREATE|digitalka|Opraviť login stránku|Nefunguje prihlásenie cez SSO|2h
-GITLAB|CREATE|eshop|Pridať export objednávok||4h
-GITLAB|CREATE|web|Zmeniť farbu tlačidla
-GITLAB|ISSUES
+2) EMAIL|LIST — posledných 5 emailov
+   EMAIL|LIST|N — posledných N emailov
+   EMAIL|NEW — nové neprečítané emaily
+   Príklady: EMAIL|LIST   EMAIL|LIST|10   EMAIL|NEW
 
-TODO:
-TODO|AKCIA
-Akcie:
-- TODO|ADD|text — pridaj novú úlohu
-- TODO|LIST — zobraz otvorené úlohy (aj hotové)
-- TODO|DONE|id — označ úlohu ako hotovú
-- TODO|DELETE|id — vymaž úlohu
-- TODO|EDIT|id|nový text — uprav text úlohy
-Príklady:
-TODO|ADD|Opraviť faktúru
-TODO|LIST (keď sa pýta čo má robiť, aké má úlohy, todo list)
-TODO|DONE|3
-TODO|DELETE|3
-TODO|EDIT|3|Opraviť faktúru do piatku
+3) GITLAB|CREATE|kľúčové_slovo_projektu|názov|popis|estimate — vytvor issue (popis a estimate voliteľné, estimate: 30m, 1h, 2h, 1d)
+   GITLAB|ISSUES — moje otvorené issues
+   Príklady: GITLAB|CREATE|digitalka|Opraviť login||2h   GITLAB|ISSUES
 
-PROJEKTY:
-PROJECT|AKCIA|parametre
-Akcie:
-- PROJECT|CREATE|názov projektu — vytvor nový projekt
-- PROJECT|ADD|id_projektu|názov podúlohy|poznámka (poznámka je voliteľná)
-- PROJECT|LIST — zobraz všetky projekty
-- PROJECT|SHOW|id_projektu — zobraz detail projektu s podúlohami
-- PROJECT|DELETE|id_projektu — vymaž projekt
-Príklady:
-PROJECT|CREATE|Redizajn webu
-PROJECT|ADD|1|Návrh wireframe|Použiť Figmu
-PROJECT|ADD|1|Implementácia headeru
-PROJECT|LIST (keď sa pýta na projekty)
-PROJECT|SHOW|1 (keď chce vidieť detail projektu)
-PROJECT|DELETE|1
+4) TODO|ADD|text — pridaj úlohu
+   TODO|LIST — zobraz úlohy
+   TODO|DONE|id — splň úlohu
+   TODO|DELETE|id — vymaž úlohu
+   TODO|EDIT|id|nový text — uprav úlohu
+   Príklady: TODO|ADD|Opraviť faktúru   TODO|LIST   TODO|DONE|3
+
+5) PROJECT|CREATE|názov — vytvor projekt
+   PROJECT|ADD|id_projektu|názov podúlohy|poznámka — pridaj podúlohu (poznámka voliteľná)
+   PROJECT|LIST — zobraz projekty
+   PROJECT|SHOW|id_projektu — detail projektu
+   PROJECT|DELETE|id_projektu — vymaž projekt
+   Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|SHOW|1
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -183,6 +147,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_claude(user_message)
+    for line in reply.strip().splitlines():
+        line = line.strip()
+        if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|")):
+            reply = line
+            break
     is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|"))
     if is_action:
         conversation_history.clear()
