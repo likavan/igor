@@ -44,25 +44,38 @@ def format_todo_list(todos):
     return msg
 
 
-def format_project_detail(project, subtasks):
-    msg = f"📂 <b>{escape(project[1])}</b> <i>(id:{project[0]})</i>\n\n"
-    if not subtasks:
-        msg += "<i>Žiadne podúlohy.</i>"
-        return msg, []
-    keyboard = []
-    for s in subtasks:
-        icon = "✅" if s[2] else "⬜"
-        msg += f"{icon} {escape(s[1])}"
-        if s[3]:
-            msg += f"\n   📝 <i>{escape(s[3])}</i>"
-        msg += f" <i>(id:{s[0]})</i>\n"
-        if not s[2]:
-            keyboard.append([
-                InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{s[0]}"),
-                InlineKeyboardButton("✏️ Poznámka", callback_data=f"pt_edit_{s[0]}"),
-                InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{s[0]}"),
-            ])
+def format_project_header(project, subtasks):
+    done = sum(1 for s in subtasks if s[2])
+    total = len(subtasks)
+    return f"📂 <b>{escape(project[1])}</b> <i>(id:{project[0]})</i> ({done}/{total})"
+
+
+def format_subtask_message(s):
+    icon = "✅" if s[2] else "⬜"
+    msg = f"{icon} {escape(s[1])}"
+    if s[3]:
+        msg += f"\n📝 <i>{escape(s[3])}</i>"
+    msg += f" <i>(id:{s[0]})</i>"
+    if not s[2]:
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{s[0]}"),
+            InlineKeyboardButton("✏️ Poznámka", callback_data=f"pt_edit_{s[0]}"),
+            InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{s[0]}"),
+        ]])
+    else:
+        keyboard = None
     return msg, keyboard
+
+
+async def send_project_detail(send_func, project, subtasks):
+    header = format_project_header(project, subtasks)
+    if not subtasks:
+        await send_func(header + "\n\n<i>Žiadne podúlohy.</i>", parse_mode="HTML")
+        return
+    await send_func(header, parse_mode="HTML")
+    for s in subtasks:
+        msg, keyboard = format_subtask_message(s)
+        await send_func(msg, parse_mode="HTML", reply_markup=keyboard)
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -138,11 +151,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         edit_subtask_notes(subtask_id, user_message)
         subtask = get_subtask(subtask_id)
         if subtask:
-            project = get_project_by_id(subtask[1])
-            subtasks = get_subtasks(subtask[1])
-            msg, keyboard = format_project_detail(project, subtasks)
-            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+            msg, keyboard = format_subtask_message(subtask)
+            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
         else:
             await update.message.reply_text("✏️ Poznámka uložená.")
         return
@@ -289,18 +299,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             subtask_id = add_subtask(project_id, text, notes)
             project = get_project_by_id(project_id)
             pname = escape(project[1]) if project else f"#{project_id}"
-            await update.message.reply_text(f"✅ Podúloha pridaná do <b>{pname}</b>: {escape(text)} (id:{subtask_id})", parse_mode="HTML")
+            await update.message.reply_text(f"✅ Podúloha pridaná do <b>{pname}</b>:", parse_mode="HTML")
+            subtask = get_subtask(subtask_id)
+            msg, keyboard = format_subtask_message(subtask)
+            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
         elif action == "EDIT_TASK":
             subtask_id = int(parts[2].strip())
             new_text = parts[3].strip()
             edit_subtask_text(subtask_id, new_text)
             subtask = get_subtask(subtask_id)
             if subtask:
-                project = get_project_by_id(subtask[1])
-                subtasks = get_subtasks(subtask[1])
-                msg, keyboard = format_project_detail(project, subtasks)
-                markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+                msg, keyboard = format_subtask_message(subtask)
+                await update.message.reply_text(f"✏️ Podúloha upravená:", parse_mode="HTML")
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
             else:
                 await update.message.reply_text(f"✏️ Podúloha {subtask_id} upravená: {new_text}")
         elif action == "LIST":
@@ -322,9 +333,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Projekt neexistuje.")
             else:
                 subtasks = get_subtasks(project_id)
-                msg, keyboard = format_project_detail(project, subtasks)
-                markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+                await send_project_detail(update.message.reply_text, project, subtasks)
         elif action == "DELETE":
             project_id = int(parts[2].strip())
             delete_project(project_id)
@@ -403,9 +412,7 @@ async def list_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Projekt neexistuje.")
             return
         subtasks = get_subtasks(project_id)
-        msg, keyboard = format_project_detail(project, subtasks)
-        markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=markup)
+        await send_project_detail(update.message.reply_text, project, subtasks)
         return
     projects = get_projects()
     if not projects:
@@ -599,26 +606,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_subtask_done(subtask_id)
         subtask = get_subtask(subtask_id)
         if subtask:
-            project = get_project_by_id(subtask[1])
-            subtasks = get_subtasks(subtask[1])
-            msg, keyboard = format_project_detail(project, subtasks)
-            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=markup)
+            msg, keyboard = format_subtask_message(subtask)
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
         else:
             await query.edit_message_text("✅ Podúloha splnená.")
     elif raw.startswith("pt_del_"):
         subtask_id = int(raw.split("_")[-1])
-        subtask = get_subtask(subtask_id)
-        if subtask:
-            project_id = subtask[1]
-            delete_subtask(subtask_id)
-            project = get_project_by_id(project_id)
-            subtasks = get_subtasks(project_id)
-            msg, keyboard = format_project_detail(project, subtasks)
-            markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=markup)
-        else:
-            await query.edit_message_text("🗑️ Podúloha vymazaná.")
+        delete_subtask(subtask_id)
+        await query.edit_message_text("🗑️ Podúloha vymazaná.")
     elif raw.startswith("pt_edit_"):
         subtask_id = int(raw.split("_")[-1])
         subtask = get_subtask(subtask_id)
