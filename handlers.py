@@ -525,9 +525,21 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
         msg += "\n"
     todos = get_todos()
     if todos:
+        now = datetime.now(TZ)
         msg += "<b>📝 Otvorené úlohy:</b>\n"
         for t in todos:
-            msg += f"• {t[1]}\n"
+            try:
+                created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
+                days = (now - created.replace(tzinfo=TZ)).days
+            except Exception:
+                days = 0
+            if days > 10:
+                icon = "🔴"
+            elif days > 5:
+                icon = "🟠"
+            else:
+                icon = "🟢"
+            msg += f"{icon} {t[1]} <i>({days}d)</i>\n"
         msg += "\n"
     if not reminders and not todos:
         msg += "Dnes nemáš žiadne pripomienky ani úlohy."
