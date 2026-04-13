@@ -45,7 +45,15 @@ def _deadline_bonus(due_date_str):
     return 0
 
 
-def calculate_score(value, time_estimate_min, created_at_str, due_date_str=None):
+def _waiting_bonus(waiting):
+    if waiting == "client":
+        return 3
+    if waiting == "internal":
+        return 1
+    return 0
+
+
+def calculate_score(value, time_estimate_min, created_at_str, due_date_str=None, waiting="none"):
     if value is None:
         return None
     try:
@@ -56,7 +64,8 @@ def calculate_score(value, time_estimate_min, created_at_str, due_date_str=None)
     decay_bonus = weeks * 0.5
     penalty = _time_penalty(time_estimate_min)
     deadline = _deadline_bonus(due_date_str)
-    return round((value * 2 - penalty) + decay_bonus + deadline, 2)
+    blocker = _waiting_bonus(waiting)
+    return round((value * 2 - penalty) + decay_bonus + deadline + blocker, 2)
 
 
 def recalculate_and_save(task_id):
@@ -68,10 +77,11 @@ def recalculate_and_save(task_id):
     created = task[COLS["created_at"]]
     tier = task[COLS["tier"]]
     due_date = task[COLS["due_date"]]
+    waiting = task[COLS["waiting"]] or "none"
     if tier == "forced":
         update_triage_score(task_id, 999)
         return 999
-    score = calculate_score(value, time_est, created, due_date)
+    score = calculate_score(value, time_est, created, due_date, waiting)
     if score is not None:
         update_triage_score(task_id, score)
     return score
@@ -157,6 +167,7 @@ def format_triage_task(task):
     score_str = f"{score:.1f}" if score is not None else "?"
     parts = [f"{icon} <b>{title}</b>{tier_badge}"]
     due_date = task[COLS["due_date"]]
+    waiting = task[COLS["waiting"]] or "none"
     details = []
     if value is not None:
         details.append(f"val:{value}")
@@ -164,6 +175,8 @@ def format_triage_task(task):
         details.append(time_str)
     if due_date:
         details.append(f"dl:{due_date}")
+    if waiting != "none":
+        details.append(f"wait:{waiting}")
     details.append(f"score:{score_str}")
     details.append(f"src:{source}")
     parts.append(f"<i>({', '.join(details)}, id:{tid})</i>")

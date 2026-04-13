@@ -290,22 +290,27 @@ def _init_triage_table(conn):
             created_at DATETIME NOT NULL,
             scored_at DATETIME,
             done INTEGER DEFAULT 0,
-            done_at DATETIME
+            done_at DATETIME,
+            waiting TEXT DEFAULT 'none'
         )
     """)
+    try:
+        conn.execute("ALTER TABLE triage_tasks ADD COLUMN waiting TEXT DEFAULT 'none'")
+    except sqlite3.OperationalError:
+        pass
 
 
 def add_triage_task(source, title, source_id=None, gitlab_project_id=None,
                     description="", tier="self", value=None, time_estimate=None,
-                    due_date=None, url=""):
+                    due_date=None, url="", waiting="none"):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
     c.execute("""INSERT INTO triage_tasks
         (source, source_id, gitlab_project_id, title, description, tier, value,
-         time_estimate, due_date, url, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+         time_estimate, due_date, url, waiting, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (source, source_id, gitlab_project_id, title, description, tier, value,
-         time_estimate, due_date, url, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
+         time_estimate, due_date, url, waiting, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
     task_id = c.lastrowid
     conn.commit()
     conn.close()
@@ -361,6 +366,14 @@ def mark_triage_done(task_id):
     conn.close()
 
 
+def set_triage_waiting(task_id, waiting):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE triage_tasks SET waiting=? WHERE id=?", (waiting, task_id))
+    conn.commit()
+    conn.close()
+
+
 def set_triage_deadline(task_id, due_date):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()
@@ -389,7 +402,7 @@ def triage_task_exists(source, source_id):
 def get_triage_column_names():
     return ["id", "source", "source_id", "gitlab_project_id", "title", "description",
             "tier", "value", "time_estimate", "due_date", "priority_score", "url",
-            "created_at", "scored_at", "done", "done_at"]
+            "created_at", "scored_at", "done", "done_at", "waiting"]
 
 
 def get_project_by_id(project_id):
