@@ -361,6 +361,14 @@ def mark_triage_done(task_id):
     conn.close()
 
 
+def set_triage_deadline(task_id, due_date):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE triage_tasks SET due_date=? WHERE id=?", (due_date, task_id))
+    conn.commit()
+    conn.close()
+
+
 def delete_triage_task(task_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()

@@ -11,7 +11,8 @@ from db import (
     add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
     create_project, get_projects, delete_project, add_subtask, get_subtasks, get_subtask,
     mark_subtask_done, edit_subtask_text, edit_subtask_notes, delete_subtask, get_project_by_id,
-    add_triage_task, get_triage_tasks, get_triage_task, mark_triage_done, delete_triage_task, triage_task_exists,
+    add_triage_task, get_triage_tasks, get_triage_task, mark_triage_done, delete_triage_task,
+    set_triage_deadline, triage_task_exists,
 )
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues, sync_my_issues
@@ -159,6 +160,7 @@ Dostupné akcie:
    TRIAGE|ADD|názov|tier|čas_min|hodnota|deadline — pridaj manuálnu úlohu (tier: forced/negotiable/self, čas v minútach, hodnota 1-5, deadline YYYY-MM-DD; tier/čas/hodnota/deadline voliteľné)
    TRIAGE|LIST — rebríček úloh podľa priority score
    TRIAGE|DONE|id — označ triage úlohu ako hotovú
+   TRIAGE|DEADLINE|id|YYYY-MM-DD — nastav/zmeň deadline triage úlohy
    TRIAGE|DELETE|id — vymaž triage úlohu
    TRIAGE|FORCE|názov|čas_min — pridaj forced úlohu (šéf/klient príkaz), čas v minútach
    Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3|2026-04-20   TRIAGE|ADD|Niečo rýchle|||2||   TRIAGE|FORCE|Hotfix login|240   TRIAGE|DELETE|3   TRIAGE|LIST
@@ -442,6 +444,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_id = int(parts[2].strip())
                 mark_triage_done(task_id)
                 await update.message.reply_text("Triage uloha splnena.")
+            elif action == "DEADLINE":
+                task_id = int(parts[2].strip())
+                due_date = parts[3].strip()
+                set_triage_deadline(task_id, due_date)
+                score = recalculate_and_save(task_id)
+                task = get_triage_task(task_id)
+                if task:
+                    await update.message.reply_text(f"📅 Deadline nastaveny:\n{format_triage_task(task)}", parse_mode="HTML")
+                else:
+                    await update.message.reply_text(f"Uloha {task_id} neexistuje.")
             elif action == "DELETE":
                 task_id = int(parts[2].strip())
                 delete_triage_task(task_id)
