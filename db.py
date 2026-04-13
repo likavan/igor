@@ -361,6 +361,14 @@ def mark_triage_done(task_id):
     conn.close()
 
 
+def delete_triage_task(task_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM triage_tasks WHERE id=?", (task_id,))
+    conn.commit()
+    conn.close()
+
+
 def triage_task_exists(source, source_id):
     conn = sqlite3.connect("assistant.db")
     c = conn.cursor()

@@ -11,7 +11,7 @@ from db import (
     add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
     create_project, get_projects, delete_project, add_subtask, get_subtasks, get_subtask,
     mark_subtask_done, edit_subtask_text, edit_subtask_notes, delete_subtask, get_project_by_id,
-    add_triage_task, get_triage_tasks, get_triage_task, mark_triage_done, triage_task_exists,
+    add_triage_task, get_triage_tasks, get_triage_task, mark_triage_done, delete_triage_task, triage_task_exists,
 )
 from emails import fetch_emails
 from gitlab import search_projects, create_issue, list_my_issues, sync_my_issues
@@ -158,8 +158,9 @@ Dostupné akcie:
    TRIAGE|ADD|názov|tier|čas_min|hodnota — pridaj manuálnu úlohu (tier: forced/negotiable/self, čas v minútach, hodnota 1-5; tier/čas/hodnota voliteľné)
    TRIAGE|LIST — rebríček úloh podľa priority score
    TRIAGE|DONE|id — označ triage úlohu ako hotovú
+   TRIAGE|DELETE|id — vymaž triage úlohu
    TRIAGE|FORCE|názov|čas_min — pridaj forced úlohu (šéf/klient príkaz), čas v minútach
-   Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3   TRIAGE|FORCE|Hotfix login|240   TRIAGE|LIST
+   Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3   TRIAGE|FORCE|Hotfix login|240   TRIAGE|DELETE|3   TRIAGE|LIST
 
 DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|. Ak hovorí o prioritizácii, triage, scoring, alebo "sync gitlab", použi TRIAGE|.
 
@@ -456,6 +457,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_id = int(parts[2].strip())
                 mark_triage_done(task_id)
                 await update.message.reply_text("Triage uloha splnena.")
+            elif action == "DELETE":
+                task_id = int(parts[2].strip())
+                delete_triage_task(task_id)
+                await update.message.reply_text("🗑️ Triage uloha vymazana.")
             elif action == "FORCE":
                 title = parts[2].strip()
                 time_est = int(parts[3].strip()) if len(parts) > 3 and parts[3].strip() else 120
