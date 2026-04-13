@@ -25,6 +25,7 @@ anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
 email_cache = {}
 gitlab_cache = {}
+gitlab_sync_cache = {}
 pending_edit = {}
 
 
@@ -388,28 +389,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if action == "SYNC":
                 issues = sync_my_issues()
-                new_count = 0
-                for issue in issues:
-                    if not triage_task_exists("gitlab", issue["source_id"]):
-                        add_triage_task(
-                            source="gitlab",
-                            title=issue["title"],
-                            source_id=issue["source_id"],
-                            gitlab_project_id=issue["project_id"],
-                            description=issue["description"],
-                            tier=issue["tier"],
-                            time_estimate=issue["time_estimate"],
-                            due_date=issue["due_date"],
-                            url=issue["url"],
-                        )
-                        new_count += 1
-                if new_count == 0:
+                new_issues = [i for i in issues if not triage_task_exists("gitlab", i["source_id"])]
+                if not new_issues:
                     await update.message.reply_text("Ziadne nove issues z GitLabu.")
                 else:
-                    await update.message.reply_text(f"Synced {new_count} novych issues z GitLabu.")
-                    unscored = get_triage_tasks(only_unscored=True)
-                    if unscored:
-                        await _show_triage_queue(update.message.reply_text, unscored)
+                    await _show_gitlab_picker(update.message.reply_text, new_issues)
             elif action == "QUEUE":
                 unscored = get_triage_tasks(only_unscored=True)
                 if not unscored:
@@ -488,6 +472,25 @@ def _make_value_buttons(task_id):
     return InlineKeyboardMarkup([buttons])
 
 
+async def _show_gitlab_picker(send_func, issues):
+    await send_func(f"📋 <b>Nové GitLab issues ({len(issues)}):</b>\nVyber ktoré pridať do triage:", parse_mode="HTML")
+    for issue in issues:
+        cache_key = f"glsync_{issue['source_id']}"
+        gitlab_sync_cache[cache_key] = issue
+        time_est = issue.get("time_estimate")
+        time_str = ""
+        if time_est:
+            time_str = f" ({time_est // 60}h)" if time_est >= 60 else f" ({time_est}m)"
+        msg = f"<b>{escape(issue['title'])}</b>{time_str}"
+        if issue.get("tier") == "negotiable":
+            msg += " [NEG]"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("➕ Pridať", callback_data=f"tr_add_{cache_key}"),
+            InlineKeyboardButton("⏭️ Preskočiť", callback_data=f"tr_skip_{cache_key}"),
+        ]])
+        await send_func(msg, parse_mode="HTML", reply_markup=keyboard)
+
+
 async def _show_triage_queue(send_func, unscored):
     msg = f"❓ <b>Neohodnotene ulohy ({len(unscored)}):</b>\n\n"
     await send_func(msg, parse_mode="HTML")
@@ -521,28 +524,11 @@ async def triage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Syncujem GitLab...")
         try:
             issues = sync_my_issues()
-            new_count = 0
-            for issue in issues:
-                if not triage_task_exists("gitlab", issue["source_id"]):
-                    add_triage_task(
-                        source="gitlab",
-                        title=issue["title"],
-                        source_id=issue["source_id"],
-                        gitlab_project_id=issue["project_id"],
-                        description=issue["description"],
-                        tier=issue["tier"],
-                        time_estimate=issue["time_estimate"],
-                        due_date=issue["due_date"],
-                        url=issue["url"],
-                    )
-                    new_count += 1
-            if new_count == 0:
+            new_issues = [i for i in issues if not triage_task_exists("gitlab", i["source_id"])]
+            if not new_issues:
                 await update.message.reply_text("Ziadne nove issues.")
             else:
-                await update.message.reply_text(f"Synced {new_count} novych issues.")
-                unscored = get_triage_tasks(only_unscored=True)
-                if unscored:
-                    await _show_triage_queue(update.message.reply_text, unscored)
+                await _show_gitlab_picker(update.message.reply_text, new_issues)
         except Exception as e:
             await update.message.reply_text(f"Chyba GitLab sync: {e}")
     else:
@@ -846,6 +832,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
+    if raw.startswith("tr_add_"):
+        cache_key = raw[7:]  # strip "tr_add_"
+        issue = gitlab_sync_cache.pop(cache_key, None)
+        if not issue:
+            await query.edit_message_text("Issue expiroval, skús znova /tr sync")
+            return
+        if triage_task_exists("gitlab", issue["source_id"]):
+            await query.edit_message_text(f"<b>{escape(issue['title'])}</b> — už je v triage.", parse_mode="HTML")
+            return
+        task_id = add_triage_task(
+            source="gitlab", title=issue["title"], source_id=issue["source_id"],
+            gitlab_project_id=issue["project_id"], description=issue["description"],
+            tier=issue["tier"], time_estimate=issue["time_estimate"],
+            due_date=issue["due_date"], url=issue["url"],
+        )
+        keyboard = _make_value_buttons(task_id)
+        await query.edit_message_text(
+            f"✅ Pridané: <b>{escape(issue['title'])}</b>\nOhodnoť (1-5):",
+            parse_mode="HTML", reply_markup=keyboard,
+        )
+        return
+    if raw.startswith("tr_skip_"):
+        cache_key = raw[8:]  # strip "tr_skip_"
+        issue = gitlab_sync_cache.pop(cache_key, None)
+        title = escape(issue["title"]) if issue else "?"
+        await query.edit_message_text(f"⏭️ Preskočené: <b>{title}</b>", parse_mode="HTML")
+        return
     if raw.startswith("tr_val_"):
         # tr_val_{task_id}_{value}
         parts = raw.split("_")
