@@ -128,11 +128,14 @@ Dostupné akcie:
 
 5) PROJECT|CREATE|názov — vytvor projekt
    PROJECT|ADD|id_projektu|názov podúlohy|poznámka — pridaj podúlohu (poznámka voliteľná)
-   PROJECT|EDIT_TASK|id_podúlohy|nový text — uprav text podúlohy
+   PROJECT|EDIT_TASK|id_podúlohy|nový text — uprav text podúlohy (POZOR: toto je iné ako TODO|EDIT, toto upravuje podúlohu v projekte)
+   PROJECT|DONE_TASK|id_podúlohy — označ podúlohu ako hotovú
    PROJECT|LIST — zobraz projekty
    PROJECT|SHOW|id_projektu — detail projektu
    PROJECT|DELETE|id_projektu — vymaž projekt
-   Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|EDIT_TASK|2|Napísať hromadný mail   PROJECT|SHOW|1
+   Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|EDIT_TASK|2|Napísať hromadný mail   PROJECT|DONE_TASK|3   PROJECT|SHOW|1
+
+DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|.
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -158,6 +161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_claude(user_message)
+    print(f"Claude reply: {reply[:200]}")
     for line in reply.strip().splitlines():
         line = line.strip()
         if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|")):
@@ -314,6 +318,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
             else:
                 await update.message.reply_text(f"✏️ Podúloha {subtask_id} upravená: {new_text}")
+        elif action == "DONE_TASK":
+            subtask_id = int(parts[2].strip())
+            mark_subtask_done(subtask_id)
+            subtask = get_subtask(subtask_id)
+            if subtask:
+                msg, keyboard = format_subtask_message(subtask)
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                await update.message.reply_text("✅ Podúloha splnená.")
         elif action == "LIST":
             projects = get_projects()
             if not projects:
