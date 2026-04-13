@@ -42,7 +42,9 @@ def _deadline_bonus(due_date_str):
         return 2
     if days_left <= 14:
         return 1
-    return 0
+    if days_left <= 28:
+        return -1
+    return -2
 
 
 def _waiting_bonus(waiting):
