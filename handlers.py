@@ -63,11 +63,16 @@ def format_subtask_message(s):
         msg += f"\n📝 <i>{escape(str(notes))}</i>"
     msg += f" <i>(id:{sid})</i>"
     if not done:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{sid}"),
-            InlineKeyboardButton("✏️ Poznámka", callback_data=f"pt_edit_{sid}"),
-            InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{sid}"),
-        ]])
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{sid}"),
+                InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{sid}"),
+            ],
+            [
+                InlineKeyboardButton("✏️ Podúloha", callback_data=f"pt_etxt_{sid}"),
+                InlineKeyboardButton("📝 Poznámka", callback_data=f"pt_edit_{sid}"),
+            ],
+        ])
     else:
         keyboard = None
     return msg, keyboard
@@ -156,14 +161,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_message = update.message.text
     if update.message.reply_to_message and YOUR_CHAT_ID in pending_edit:
-        subtask_id = pending_edit.pop(YOUR_CHAT_ID)
-        edit_subtask_notes(subtask_id, user_message)
+        edit_data = pending_edit.pop(YOUR_CHAT_ID)
+        subtask_id = edit_data["id"]
+        if edit_data["type"] == "notes":
+            edit_subtask_notes(subtask_id, user_message)
+        else:
+            edit_subtask_text(subtask_id, user_message)
         subtask = get_subtask(subtask_id)
         if subtask:
             msg, keyboard = format_subtask_message(subtask)
             await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
         else:
-            await update.message.reply_text("✏️ Poznámka uložená.")
+            await update.message.reply_text("✏️ Uložené.")
         return
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_claude(user_message)
@@ -645,17 +654,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subtask_id = int(raw.split("_")[-1])
         delete_subtask(subtask_id)
         await query.edit_message_text("🗑️ Podúloha vymazaná.")
+    elif raw.startswith("pt_etxt_"):
+        subtask_id = int(raw.split("_")[-1])
+        subtask = get_subtask(subtask_id)
+        if not subtask:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Podúloha neexistuje.")
+            return
+        pending_edit[YOUR_CHAT_ID] = {"id": subtask_id, "type": "text"}
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=f"✏️ Uprav podúlohu: <b>{escape(subtask[2])}</b>",
+            parse_mode="HTML",
+            reply_markup=ForceReply(input_field_placeholder=subtask[2]),
+        )
     elif raw.startswith("pt_edit_"):
         subtask_id = int(raw.split("_")[-1])
         subtask = get_subtask(subtask_id)
         if not subtask:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Podúloha neexistuje.")
             return
-        pending_edit[YOUR_CHAT_ID] = subtask_id
+        pending_edit[YOUR_CHAT_ID] = {"id": subtask_id, "type": "notes"}
         current_notes = subtask[4] or ""
         await context.bot.send_message(
             chat_id=YOUR_CHAT_ID,
-            text=f"✏️ Uprav poznámku pre: <b>{escape(subtask[2])}</b>",
+            text=f"📝 Uprav poznámku pre: <b>{escape(subtask[2])}</b>",
             parse_mode="HTML",
             reply_markup=ForceReply(input_field_placeholder=current_notes if current_notes else "Poznámka..."),
         )
