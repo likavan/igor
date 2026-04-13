@@ -156,12 +156,12 @@ Dostupné akcie:
 6) TRIAGE|SYNC — sync GitLab issues do triage queue
    TRIAGE|QUEUE — zobraz neohodnotené úlohy
    TRIAGE|SCORE|id|hodnota — ohodnoť úlohu (hodnota 1-5)
-   TRIAGE|ADD|názov|tier|čas_min|hodnota — pridaj manuálnu úlohu (tier: forced/negotiable/self, čas v minútach, hodnota 1-5; tier/čas/hodnota voliteľné)
+   TRIAGE|ADD|názov|tier|čas_min|hodnota|deadline — pridaj manuálnu úlohu (tier: forced/negotiable/self, čas v minútach, hodnota 1-5, deadline YYYY-MM-DD; tier/čas/hodnota/deadline voliteľné)
    TRIAGE|LIST — rebríček úloh podľa priority score
    TRIAGE|DONE|id — označ triage úlohu ako hotovú
    TRIAGE|DELETE|id — vymaž triage úlohu
    TRIAGE|FORCE|názov|čas_min — pridaj forced úlohu (šéf/klient príkaz), čas v minútach
-   Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3   TRIAGE|FORCE|Hotfix login|240   TRIAGE|DELETE|3   TRIAGE|LIST
+   Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3|2026-04-20   TRIAGE|ADD|Niečo rýchle|||2||   TRIAGE|FORCE|Hotfix login|240   TRIAGE|DELETE|3   TRIAGE|LIST
 
 DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|. Ak hovorí o prioritizácii, triage, scoring, alebo "sync gitlab", použi TRIAGE|.
 
@@ -418,7 +418,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tier = parts[3].strip() if len(parts) > 3 and parts[3].strip() else "self"
                 time_est = int(parts[4].strip()) if len(parts) > 4 and parts[4].strip() else None
                 value = int(parts[5].strip()) if len(parts) > 5 and parts[5].strip() else None
-                task_id = add_triage_task(source="manual", title=title, tier=tier, time_estimate=time_est, value=value)
+                due_date = parts[6].strip() if len(parts) > 6 and parts[6].strip() else None
+                task_id = add_triage_task(source="manual", title=title, tier=tier, time_estimate=time_est, value=value, due_date=due_date)
                 if value is not None:
                     score_and_recalc(task_id, value)
                 task = get_triage_task(task_id)

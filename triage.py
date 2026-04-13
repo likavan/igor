@@ -26,7 +26,26 @@ def _time_penalty(minutes):
     return 4
 
 
-def calculate_score(value, time_estimate_min, created_at_str):
+def _deadline_bonus(due_date_str):
+    if not due_date_str:
+        return 0
+    try:
+        due = datetime.strptime(due_date_str, "%Y-%m-%d").replace(tzinfo=TZ)
+    except Exception:
+        return 0
+    days_left = (due - datetime.now(TZ)).days
+    if days_left <= 1:
+        return 4
+    if days_left <= 3:
+        return 3
+    if days_left <= 7:
+        return 2
+    if days_left <= 14:
+        return 1
+    return 0
+
+
+def calculate_score(value, time_estimate_min, created_at_str, due_date_str=None):
     if value is None:
         return None
     try:
@@ -36,7 +55,8 @@ def calculate_score(value, time_estimate_min, created_at_str):
     weeks = (datetime.now(TZ) - created).days / 7
     decay_bonus = weeks * 0.5
     penalty = _time_penalty(time_estimate_min)
-    return round((value * 2 - penalty) + decay_bonus, 2)
+    deadline = _deadline_bonus(due_date_str)
+    return round((value * 2 - penalty) + decay_bonus + deadline, 2)
 
 
 def recalculate_and_save(task_id):
@@ -47,10 +67,11 @@ def recalculate_and_save(task_id):
     time_est = task[COLS["time_estimate"]]
     created = task[COLS["created_at"]]
     tier = task[COLS["tier"]]
+    due_date = task[COLS["due_date"]]
     if tier == "forced":
         update_triage_score(task_id, 999)
         return 999
-    score = calculate_score(value, time_est, created)
+    score = calculate_score(value, time_est, created, due_date)
     if score is not None:
         update_triage_score(task_id, score)
     return score
@@ -135,11 +156,14 @@ def format_triage_task(task):
                 time_str += f"{time_est % 60}m"
     score_str = f"{score:.1f}" if score is not None else "?"
     parts = [f"{icon} <b>{title}</b>{tier_badge}"]
+    due_date = task[COLS["due_date"]]
     details = []
     if value is not None:
         details.append(f"val:{value}")
     if time_str:
         details.append(time_str)
+    if due_date:
+        details.append(f"dl:{due_date}")
     details.append(f"score:{score_str}")
     details.append(f"src:{source}")
     parts.append(f"<i>({', '.join(details)}, id:{tid})</i>")
