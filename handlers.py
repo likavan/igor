@@ -51,16 +51,22 @@ def format_project_header(project, subtasks):
 
 
 def format_subtask_message(s):
-    icon = "✅" if s[2] else "⬜"
-    msg = f"{icon} {escape(s[1])}"
-    if s[3]:
-        msg += f"\n📝 <i>{escape(s[3])}</i>"
-    msg += f" <i>(id:{s[0]})</i>"
-    if not s[2]:
+    # s from get_subtasks: (id, text, done, notes)
+    # s from get_subtask:  (id, project_id, text, done, notes)
+    if len(s) == 5:
+        sid, text, done, notes = s[0], s[2], s[3], s[4]
+    else:
+        sid, text, done, notes = s[0], s[1], s[2], s[3]
+    icon = "✅" if done else "⬜"
+    msg = f"{icon} {escape(str(text))}"
+    if notes:
+        msg += f"\n📝 <i>{escape(str(notes))}</i>"
+    msg += f" <i>(id:{sid})</i>"
+    if not done:
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{s[0]}"),
-            InlineKeyboardButton("✏️ Poznámka", callback_data=f"pt_edit_{s[0]}"),
-            InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{s[0]}"),
+            InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{sid}"),
+            InlineKeyboardButton("✏️ Poznámka", callback_data=f"pt_edit_{sid}"),
+            InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{sid}"),
         ]])
     else:
         keyboard = None
