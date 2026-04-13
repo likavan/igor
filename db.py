@@ -51,6 +51,7 @@ def init_db():
             notified_at DATETIME NOT NULL
         )
     """)
+    _init_triage_table(conn)
     conn.commit()
     conn.close()
 
@@ -267,6 +268,112 @@ def delete_subtask(subtask_id):
     c.execute("DELETE FROM subtasks WHERE id=?", (subtask_id,))
     conn.commit()
     conn.close()
+
+
+# --- Triage Tasks ---
+
+def _init_triage_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS triage_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            source_id TEXT,
+            gitlab_project_id INTEGER,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            tier TEXT DEFAULT 'self',
+            value INTEGER,
+            time_estimate INTEGER,
+            due_date TEXT,
+            priority_score REAL,
+            url TEXT DEFAULT '',
+            created_at DATETIME NOT NULL,
+            scored_at DATETIME,
+            done INTEGER DEFAULT 0,
+            done_at DATETIME
+        )
+    """)
+
+
+def add_triage_task(source, title, source_id=None, gitlab_project_id=None,
+                    description="", tier="self", value=None, time_estimate=None,
+                    due_date=None, url=""):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("""INSERT INTO triage_tasks
+        (source, source_id, gitlab_project_id, title, description, tier, value,
+         time_estimate, due_date, url, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (source, source_id, gitlab_project_id, title, description, tier, value,
+         time_estimate, due_date, url, datetime.now(TZ).strftime("%Y-%m-%d %H:%M")))
+    task_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return task_id
+
+
+def get_triage_task(task_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM triage_tasks WHERE id=?", (task_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def get_triage_tasks(only_open=True, only_unscored=False):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    if only_unscored:
+        c.execute("SELECT * FROM triage_tasks WHERE done=0 AND value IS NULL ORDER BY created_at")
+    elif only_open:
+        c.execute("SELECT * FROM triage_tasks WHERE done=0 ORDER BY tier='forced' DESC, priority_score DESC NULLS LAST, created_at")
+    else:
+        c.execute("SELECT * FROM triage_tasks ORDER BY done, priority_score DESC NULLS LAST, created_at")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def score_triage_task(task_id, value):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE triage_tasks SET value=?, scored_at=? WHERE id=?",
+              (value, datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), task_id))
+    conn.commit()
+    conn.close()
+
+
+def update_triage_score(task_id, score):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE triage_tasks SET priority_score=? WHERE id=?", (score, task_id))
+    conn.commit()
+    conn.close()
+
+
+def mark_triage_done(task_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("UPDATE triage_tasks SET done=1, done_at=? WHERE id=?",
+              (datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), task_id))
+    conn.commit()
+    conn.close()
+
+
+def triage_task_exists(source, source_id):
+    conn = sqlite3.connect("assistant.db")
+    c = conn.cursor()
+    c.execute("SELECT id FROM triage_tasks WHERE source=? AND source_id=?", (source, source_id))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+
+def get_triage_column_names():
+    return ["id", "source", "source_id", "gitlab_project_id", "title", "description",
+            "tier", "value", "time_estimate", "due_date", "priority_score", "url",
+            "created_at", "scored_at", "done", "done_at"]
 
 
 def get_project_by_id(project_id):

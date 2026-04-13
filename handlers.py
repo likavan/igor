@@ -11,9 +11,15 @@ from db import (
     add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
     create_project, get_projects, delete_project, add_subtask, get_subtasks, get_subtask,
     mark_subtask_done, edit_subtask_text, edit_subtask_notes, delete_subtask, get_project_by_id,
+    add_triage_task, get_triage_tasks, get_triage_task, mark_triage_done, triage_task_exists,
 )
 from emails import fetch_emails
-from gitlab import search_projects, create_issue, list_my_issues
+from gitlab import search_projects, create_issue, list_my_issues, sync_my_issues
+from triage import (
+    COLS, score_and_recalc, recalculate_and_save, format_triage_task,
+    get_displacement_report, get_top_tasks, get_alert_tasks, get_score_icon,
+    THIS_WEEK_MIN,
+)
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 conversation_history = []
@@ -146,7 +152,16 @@ Dostupné akcie:
    PROJECT|DELETE|id_projektu — vymaž projekt
    Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|EDIT_TASK|2|Napísať hromadný mail   PROJECT|DONE_TASK|3   PROJECT|SHOW|1
 
-DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|.
+6) TRIAGE|SYNC — sync GitLab issues do triage queue
+   TRIAGE|QUEUE — zobraz neohodnotené úlohy
+   TRIAGE|SCORE|id|hodnota — ohodnoť úlohu (hodnota 1-5)
+   TRIAGE|ADD|názov|tier|čas_min|hodnota — pridaj manuálnu úlohu (tier: forced/negotiable/self, čas v minútach, hodnota 1-5; tier/čas/hodnota voliteľné)
+   TRIAGE|LIST — rebríček úloh podľa priority score
+   TRIAGE|DONE|id — označ triage úlohu ako hotovú
+   TRIAGE|FORCE|názov|čas_min — pridaj forced úlohu (šéf/klient príkaz), čas v minútach
+   Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3   TRIAGE|FORCE|Hotfix login|240   TRIAGE|LIST
+
+DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|. Ak hovorí o prioritizácii, triage, scoring, alebo "sync gitlab", použi TRIAGE|.
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         messages=conversation_history
@@ -182,7 +197,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|")):
             reply = line
             break
-    is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|"))
+    is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|", "TRIAGE|"))
     if is_action:
         conversation_history.clear()
     if reply.startswith("REMINDER|"):
@@ -366,8 +381,174 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             project_id = int(parts[2].strip())
             delete_project(project_id)
             await update.message.reply_text("🗑️ Projekt vymazaný.")
+    elif reply.startswith("TRIAGE|"):
+        parts = reply.split("|")
+        action = parts[1].strip()
+        try:
+            if action == "SYNC":
+                issues = sync_my_issues()
+                new_count = 0
+                for issue in issues:
+                    if not triage_task_exists("gitlab", issue["source_id"]):
+                        add_triage_task(
+                            source="gitlab",
+                            title=issue["title"],
+                            source_id=issue["source_id"],
+                            gitlab_project_id=issue["project_id"],
+                            description=issue["description"],
+                            tier=issue["tier"],
+                            time_estimate=issue["time_estimate"],
+                            due_date=issue["due_date"],
+                            url=issue["url"],
+                        )
+                        new_count += 1
+                if new_count == 0:
+                    await update.message.reply_text("Ziadne nove issues z GitLabu.")
+                else:
+                    await update.message.reply_text(f"Synced {new_count} novych issues z GitLabu.")
+                    unscored = get_triage_tasks(only_unscored=True)
+                    if unscored:
+                        await _show_triage_queue(update.message.reply_text, unscored)
+            elif action == "QUEUE":
+                unscored = get_triage_tasks(only_unscored=True)
+                if not unscored:
+                    await update.message.reply_text("Ziadne neohodnotene ulohy.")
+                else:
+                    await _show_triage_queue(update.message.reply_text, unscored)
+            elif action == "SCORE":
+                task_id = int(parts[2].strip())
+                value = int(parts[3].strip())
+                if value < 1 or value > 5:
+                    await update.message.reply_text("Hodnota musi byt 1-5.")
+                    return
+                score = score_and_recalc(task_id, value)
+                task = get_triage_task(task_id)
+                if task:
+                    msg = f"Ohodnotene: {format_triage_task(task)}"
+                    await update.message.reply_text(msg, parse_mode="HTML")
+                else:
+                    await update.message.reply_text(f"Uloha {task_id} neexistuje.")
+            elif action == "ADD":
+                title = parts[2].strip()
+                tier = parts[3].strip() if len(parts) > 3 and parts[3].strip() else "self"
+                time_est = int(parts[4].strip()) if len(parts) > 4 and parts[4].strip() else None
+                value = int(parts[5].strip()) if len(parts) > 5 and parts[5].strip() else None
+                task_id = add_triage_task(source="manual", title=title, tier=tier, time_estimate=time_est, value=value)
+                if value is not None:
+                    score_and_recalc(task_id, value)
+                task = get_triage_task(task_id)
+                msg = f"Triage uloha pridana:\n{format_triage_task(task)}"
+                if value is None:
+                    keyboard = _make_value_buttons(task_id)
+                    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
+                else:
+                    await update.message.reply_text(msg, parse_mode="HTML")
+            elif action == "LIST":
+                tasks = get_triage_tasks(only_open=True)
+                if not tasks:
+                    await update.message.reply_text("Ziadne triage ulohy.")
+                else:
+                    msg = "📊 <b>Triage rebricek:</b>\n\n"
+                    for t in tasks:
+                        msg += format_triage_task(t) + "\n"
+                    await update.message.reply_text(msg, parse_mode="HTML")
+            elif action == "DONE":
+                task_id = int(parts[2].strip())
+                mark_triage_done(task_id)
+                await update.message.reply_text("Triage uloha splnena.")
+            elif action == "FORCE":
+                title = parts[2].strip()
+                time_est = int(parts[3].strip()) if len(parts) > 3 and parts[3].strip() else 120
+                task_id = add_triage_task(source="manual", title=title, tier="forced", time_estimate=time_est)
+                recalculate_and_save(task_id)
+                task = get_triage_task(task_id)
+                msg = f"⚡ FORCED uloha pridana:\n{format_triage_task(task)}\n"
+                displaced = get_displacement_report(time_est)
+                if displaced:
+                    msg += "\n<b>Vytlaci sa:</b>\n"
+                    for d in displaced:
+                        msg += f"  {format_triage_task(d)}\n"
+                await update.message.reply_text(msg, parse_mode="HTML")
+        except Exception as e:
+            await update.message.reply_text(f"Chyba triage: {e}")
     else:
         await update.message.reply_text(reply)
+
+
+def _make_value_buttons(task_id):
+    buttons = [
+        InlineKeyboardButton(f"{i}️⃣", callback_data=f"tr_val_{task_id}_{i}")
+        for i in range(1, 6)
+    ]
+    return InlineKeyboardMarkup([buttons])
+
+
+async def _show_triage_queue(send_func, unscored):
+    msg = f"❓ <b>Neohodnotene ulohy ({len(unscored)}):</b>\n\n"
+    await send_func(msg, parse_mode="HTML")
+    for t in unscored:
+        tid = t[COLS["id"]]
+        title = t[COLS["title"]]
+        source = t[COLS["source"]]
+        time_est = t[COLS["time_estimate"]]
+        time_str = ""
+        if time_est:
+            if time_est < 60:
+                time_str = f" ({time_est}m)"
+            else:
+                time_str = f" ({time_est // 60}h)"
+        task_msg = f"<b>{title}</b>{time_str} <i>(src:{source}, id:{tid})</i>"
+        keyboard = _make_value_buttons(tid)
+        await send_func(task_msg, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def triage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    arg = context.args[0].lower() if context.args else ""
+    if arg == "queue":
+        unscored = get_triage_tasks(only_unscored=True)
+        if not unscored:
+            await update.message.reply_text("Ziadne neohodnotene ulohy.")
+        else:
+            await _show_triage_queue(update.message.reply_text, unscored)
+    elif arg == "sync":
+        await update.message.reply_text("Syncujem GitLab...")
+        try:
+            issues = sync_my_issues()
+            new_count = 0
+            for issue in issues:
+                if not triage_task_exists("gitlab", issue["source_id"]):
+                    add_triage_task(
+                        source="gitlab",
+                        title=issue["title"],
+                        source_id=issue["source_id"],
+                        gitlab_project_id=issue["project_id"],
+                        description=issue["description"],
+                        tier=issue["tier"],
+                        time_estimate=issue["time_estimate"],
+                        due_date=issue["due_date"],
+                        url=issue["url"],
+                    )
+                    new_count += 1
+            if new_count == 0:
+                await update.message.reply_text("Ziadne nove issues.")
+            else:
+                await update.message.reply_text(f"Synced {new_count} novych issues.")
+                unscored = get_triage_tasks(only_unscored=True)
+                if unscored:
+                    await _show_triage_queue(update.message.reply_text, unscored)
+        except Exception as e:
+            await update.message.reply_text(f"Chyba GitLab sync: {e}")
+    else:
+        tasks = get_triage_tasks(only_open=True)
+        if not tasks:
+            await update.message.reply_text("Ziadne triage ulohy.")
+        else:
+            msg = "📊 <b>Triage rebricek:</b>\n\n"
+            for t in tasks:
+                msg += format_triage_task(t) + "\n"
+            await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -556,7 +737,23 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
                 icon = "🟢"
             msg += f"{icon} {t[1]} <i>({days}d)</i>\n"
         msg += "\n"
-    if not reminders and not todos:
+    # Triage section
+    alert_tasks = get_alert_tasks()
+    if alert_tasks:
+        msg += "<b>🔴 URGENT triage úlohy (score 8+):</b>\n"
+        for t in alert_tasks:
+            msg += f"  {format_triage_task(t)}\n"
+        msg += "\n"
+    top_tasks = get_top_tasks(min_score=THIS_WEEK_MIN, limit=3)
+    if top_tasks:
+        msg += "<b>📊 Top úlohy na tento týždeň:</b>\n"
+        for t in top_tasks:
+            msg += f"  {format_triage_task(t)}\n"
+        msg += "\n"
+    unscored = get_triage_tasks(only_unscored=True)
+    if unscored:
+        msg += f"<b>❓ Neohodnotené úlohy:</b> {len(unscored)}\n\n"
+    if not reminders and not todos and not alert_tasks and not top_tasks:
         msg += "Dnes nemáš žiadne pripomienky ani úlohy."
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
 
@@ -577,6 +774,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/tx 3 — vymazať úlohu č. 3\n"
         "/p — zoznam projektov\n"
         "/p 1 — detail projektu č. 1\n"
+        "/tr — triage rebríček\n"
+        "/tr queue — neohodnotené úlohy\n"
+        "/tr sync — sync GitLab issues\n"
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )
@@ -641,6 +841,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
+    if raw.startswith("tr_val_"):
+        # tr_val_{task_id}_{value}
+        parts = raw.split("_")
+        task_id = int(parts[2])
+        value = int(parts[3])
+        score = score_and_recalc(task_id, value)
+        task = get_triage_task(task_id)
+        if task:
+            msg = f"Ohodnotene: {format_triage_task(task)}"
+            await query.edit_message_text(msg, parse_mode="HTML")
+        else:
+            await query.edit_message_text("Uloha neexistuje.")
+        return
     if raw.startswith("pt_done_"):
         subtask_id = int(raw.split("_")[-1])
         mark_subtask_done(subtask_id)
