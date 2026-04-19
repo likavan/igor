@@ -3,8 +3,9 @@ from html import escape, unescape
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.ext import ContextTypes, CallbackQueryHandler
-import anthropic
-from config import ANTHROPIC_API_KEY, YOUR_CHAT_ID, TZ
+from google import genai
+from google.genai import types
+from config import GEMINI_API_KEY, YOUR_CHAT_ID, TZ
 from db import (
     add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime,
     is_email_notified, mark_email_notified,
@@ -22,7 +23,7 @@ from triage import (
     THIS_WEEK_MIN,
 )
 
-anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 conversation_history = []
 email_cache = {}
 gitlab_cache = {}
@@ -110,16 +111,18 @@ def format_email_list(emails, title, highlight_unseen=False):
     return msg, keyboard
 
 
-async def ask_claude(user_message):
+async def ask_gemini(user_message):
     now = datetime.now(TZ)
     days_sk = ["pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota", "nedeľa"]
     day_name = days_sk[now.weekday()]
     message_with_date = f"[Dnes je {day_name} {now.strftime('%d.%m.%Y')}, {now.strftime('%H:%M')}]\n{user_message}"
-    conversation_history.append({"role": "user", "content": message_with_date})
-    response = anthropic_client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system="""Si Igor, osobný asistent Martina. Tvoje meno je Igor. Komunikuješ po slovensky, si stručný a praktický.
+    conversation_history.append({"role": "user", "parts": [{"text": message_with_date}]})
+    response = gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=conversation_history,
+        config=types.GenerateContentConfig(
+            max_output_tokens=1000,
+            system_instruction="""Si Igor, osobný asistent Martina. Tvoje meno je Igor. Komunikuješ po slovensky, si stručný a praktický.
 
 Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte. Tvoja odpoveď musí začínať príslušným prefixom (REMINDER|, EMAIL|, GITLAB|, TODO|, PROJECT|) a nesmie obsahovať nič iné.
 
@@ -169,10 +172,10 @@ Dostupné akcie:
 DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|. Ak hovorí o prioritizácii, triage, scoring, alebo "sync gitlab", použi TRIAGE|.
 
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
-        messages=conversation_history
+        ),
     )
-    reply = response.content[0].text
-    conversation_history.append({"role": "assistant", "content": reply})
+    reply = response.text
+    conversation_history.append({"role": "model", "parts": [{"text": reply}]})
     return reply
 
 
@@ -195,8 +198,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✏️ Uložené.")
         return
     await update.message.reply_text("⏳ Premýšľam...")
-    reply = await ask_claude(user_message)
-    print(f"Claude reply: {reply[:200]}")
+    reply = await ask_gemini(user_message)
+    print(f"Gemini reply: {reply[:200]}")
     for line in reply.strip().splitlines():
         line = line.strip()
         if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|")):

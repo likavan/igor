@@ -5,11 +5,11 @@
 **O**sobný  
 **R**obot
 
-Personal AI assistant running as a Telegram bot, powered by Claude. Built to manage daily tasks, emails and work projects from a single chat interface.
+Personal AI assistant running as a Telegram bot, powered by Gemini. Built to manage daily tasks, emails and work projects from a single chat interface.
 
 ## Features
 
-### Claude-powered chat
+### Gemini-powered chat
 Natural language conversations in Slovak. Ask anything or trigger actions by just describing what you need.
 
 ### Reminders
@@ -49,7 +49,7 @@ Natural language conversations in Slovak. Ask anything or trigger actions by jus
 | `/td N` | Complete todo by ID |
 | `/h` | Help |
 
-Or just write in natural language - Claude handles the rest.
+Or just write in natural language - Gemini handles the rest.
 
 ## Project structure
 
@@ -120,7 +120,7 @@ Pulls latest code from GitHub, installs dependencies and restarts the service.
 ## Stack
 
 - **Python** + python-telegram-bot
-- **Claude** (claude-sonnet-4) via Anthropic SDK
+- **Gemini** (gemini-2.5-flash) via google-genai SDK
 - **SQLite** for reminders and email notification tracking
 - **IMAP** for email access
 - **GitLab API** for issue management

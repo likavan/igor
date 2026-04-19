@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 YOUR_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
 TZ = ZoneInfo(os.getenv("TIMEZONE", "Europe/Bratislava"))
 IMAP_SERVER = os.getenv("IMAP_SERVER")
