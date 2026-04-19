@@ -176,6 +176,7 @@ Ak nejde o žiadnu akciu, odpovedaj normálne.""",
     )
     reply = response.text
     conversation_history.append({"role": "model", "parts": [{"text": reply}]})
+    del conversation_history[:-40]
     return reply
 
 
@@ -205,9 +206,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|")):
             reply = line
             break
-    is_action = reply.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|", "TRIAGE|"))
-    if is_action:
-        conversation_history.clear()
     if reply.startswith("REMINDER|"):
         parts = reply.split("|")
         action = parts[1].strip()
