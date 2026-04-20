@@ -123,7 +123,7 @@ def generate_reply_draft(subject, from_label, body_clean):
     response = gemini_client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[{"role": "user", "parts": [{"text": prompt}]}],
-        config=types.GenerateContentConfig(max_output_tokens=600),
+        config=types.GenerateContentConfig(max_output_tokens=2000),
     )
     return (response.text or "").strip()
 
@@ -576,10 +576,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not cached:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval.")
             return
+        existing = pending_reply.get(YOUR_CHAT_ID) or {}
+        draft = existing.get("draft", "")
         pending_reply[YOUR_CHAT_ID] = {"key": key}
+        text = f"✏️ Napíš vlastnú odpoveď pre <b>{escape(cached['from_addr'])}</b>"
+        if draft:
+            text += f":\n\n<i>Pôvodný návrh:</i>\n<code>{escape(draft)}</code>"
         await context.bot.send_message(
             chat_id=YOUR_CHAT_ID,
-            text=f"✏️ Napíš vlastnú odpoveď pre <b>{escape(cached['from_addr'])}</b>:",
+            text=text,
             parse_mode="HTML",
             reply_markup=ForceReply(input_field_placeholder="Napíš odpoveď..."),
         )
