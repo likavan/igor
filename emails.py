@@ -99,12 +99,20 @@ def send_reply(to_addr, subject, body, reply_to_msgid, references, original_from
     full = f"{body}\n\nDňa {original_date}, {original_from} napísal:\n{quoted}"
     msg.set_content(full)
 
-    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as s:
-        s.login(SMTP_USERNAME, SMTP_PASSWORD)
-        s.send_message(msg)
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=15) as s:
+            s.login(SMTP_USERNAME, SMTP_PASSWORD)
+            s.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15) as s:
+            s.ehlo()
+            s.starttls()
+            s.ehlo()
+            s.login(SMTP_USERNAME, SMTP_PASSWORD)
+            s.send_message(msg)
 
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT, timeout=15)
         mail.login(IMAP_EMAIL, IMAP_PASSWORD)
         mail.append(IMAP_SENT_FOLDER, "\\Seen", imaplib.Time2Internaldate(time.time()), msg.as_bytes())
         mail.logout()
