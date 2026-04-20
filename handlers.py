@@ -1,7 +1,7 @@
 import re
 from html import escape, unescape
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.ext import ContextTypes
 from google import genai
 from google.genai import types
@@ -11,13 +11,14 @@ from db import (
     is_email_notified, mark_email_notified,
     add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
 )
-from emails import fetch_emails
+from emails import fetch_emails, send_reply
 from gitlab import search_projects, create_issue, list_my_issues
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 conversation_history = []
 email_cache = {}
 gitlab_cache = {}
+pending_reply = {}
 
 
 def format_todo_list(todos):
@@ -49,7 +50,16 @@ def format_email_list(emails, title, highlight_unseen=False):
         prefix = "🔵 " if highlight_unseen and e.get("unseen") else ""
         msg += f"{prefix}<b>{i+1}.</b> <b>Od:</b> {escape(e['from'])}\n<b>Predmet:</b> {escape(e['subject'])}\n<b>Dátum:</b> {escape(e['date'])}\n\n"
         cache_key = f"em{i}_{id(emails)}"
-        email_cache[cache_key] = {"body": e.get("body", ""), "from": e["from"], "subject": e["subject"], "date": e["date"]}
+        email_cache[cache_key] = {
+            "body": e.get("body", ""),
+            "from": e["from"],
+            "from_addr": e.get("from_addr", ""),
+            "subject": e["subject"],
+            "date": e["date"],
+            "message_id": e.get("message_id", ""),
+            "in_reply_to": e.get("in_reply_to", ""),
+            "references": e.get("references", ""),
+        }
         label = f"{i+1}. {e['subject'][:30]}"
         keyboard.append([InlineKeyboardButton(label, callback_data=cache_key)])
     return msg, keyboard
@@ -105,6 +115,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     user_message = update.message.text
+    if update.message.reply_to_message and YOUR_CHAT_ID in pending_reply:
+        key = pending_reply.pop(YOUR_CHAT_ID)
+        cached = email_cache.get(key)
+        if not cached:
+            await update.message.reply_text("Email expiroval, skús znova /e")
+            return
+        try:
+            send_reply(
+                to_addr=cached["from_addr"],
+                subject=cached["subject"],
+                body=user_message,
+                reply_to_msgid=cached.get("message_id", ""),
+                references=cached.get("references", ""),
+                original_from=cached["from"],
+                original_date=cached["date"],
+                original_body_clean=_clean_email_body(cached.get("body", "")),
+            )
+            await update.message.reply_text(f"✉️ Odoslané: {escape(cached['from_addr'])}", parse_mode="HTML")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Chyba pri odosielaní: {e}")
+        return
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_gemini(user_message)
     print(f"Gemini reply: {reply[:200]}")
@@ -496,6 +527,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
         return
+    if raw.startswith("rep_"):
+        key = raw[4:]
+        cached = email_cache.get(key)
+        if cached is None:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
+            return
+        if not cached.get("from_addr"):
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Nemám adresu odosielateľa.")
+            return
+        pending_reply[YOUR_CHAT_ID] = key
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=f"💬 <b>Odpoveď na:</b> {escape(cached['subject'])}\n<b>Komu:</b> {escape(cached['from_addr'])}",
+            parse_mode="HTML",
+            reply_markup=ForceReply(input_field_placeholder="Napíš odpoveď..."),
+        )
+        return
     if raw.startswith("em"):
         cached = email_cache.get(raw)
         if cached is None:
@@ -507,11 +555,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         body = _clean_email_body(body)
         latest, rest = _split_latest_reply(body)
-        keyboard = None
+        buttons = []
         if rest:
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📜 Zobraziť celé vlákno", callback_data=f"mf_{raw}"),
-            ]])
+            buttons.append([InlineKeyboardButton("📜 Zobraziť celé vlákno", callback_data=f"mf_{raw}")])
+        if cached.get("from_addr"):
+            buttons.append([InlineKeyboardButton("💬 Odpovedať", callback_data=f"rep_{raw}")])
+        keyboard = InlineKeyboardMarkup(buttons) if buttons else None
         await context.bot.send_message(
             chat_id=YOUR_CHAT_ID,
             text=_email_header(cached) + escape(_truncate(latest)),

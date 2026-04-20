@@ -1,8 +1,14 @@
 import imaplib
 import email
 import email.utils
+import smtplib
+import time
 from email.header import decode_header
-from config import IMAP_SERVER, IMAP_PORT, IMAP_EMAIL, IMAP_PASSWORD, TZ
+from email.message import EmailMessage
+from config import (
+    IMAP_SERVER, IMAP_PORT, IMAP_EMAIL, IMAP_PASSWORD, IMAP_SENT_FOLDER,
+    SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, TZ,
+)
 
 
 def decode_mime_header(header):
@@ -54,8 +60,11 @@ def fetch_emails(count=5, unseen_only=False):
         unseen = "\\Seen" not in raw_flags
         msg = email.message_from_bytes(msg_data[0][1])
         sender = decode_mime_header(msg["From"])
+        _, from_addr = email.utils.parseaddr(msg["From"] or "")
         subject = decode_mime_header(msg["Subject"])
         message_id = msg["Message-ID"] or f"{eid.decode()}-{msg['Date']}"
+        in_reply_to = msg["In-Reply-To"] or ""
+        references = msg["References"] or ""
         date_raw = msg["Date"]
         try:
             dt = email.utils.parsedate_to_datetime(date_raw).astimezone(TZ)
@@ -63,6 +72,41 @@ def fetch_emails(count=5, unseen_only=False):
         except Exception:
             date = date_raw
         body = extract_body(msg)
-        emails.append({"from": sender, "subject": subject, "date": date, "message_id": message_id, "unseen": unseen, "body": body})
+        emails.append({
+            "from": sender, "from_addr": from_addr,
+            "subject": subject, "date": date,
+            "message_id": message_id,
+            "in_reply_to": in_reply_to, "references": references,
+            "unseen": unseen, "body": body,
+        })
     mail.logout()
     return emails
+
+
+def send_reply(to_addr, subject, body, reply_to_msgid, references, original_from, original_date, original_body_clean):
+    msg = EmailMessage()
+    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    msg["From"] = SMTP_USERNAME
+    msg["To"] = to_addr
+    msg["Subject"] = reply_subject
+    msg["Date"] = email.utils.formatdate(localtime=True)
+    msg["Message-ID"] = email.utils.make_msgid()
+    if reply_to_msgid:
+        msg["In-Reply-To"] = reply_to_msgid
+        chain = f"{references} {reply_to_msgid}".strip() if references else reply_to_msgid
+        msg["References"] = chain
+    quoted = "\n".join(f"> {line}" for line in (original_body_clean or "").splitlines())
+    full = f"{body}\n\nDňa {original_date}, {original_from} napísal:\n{quoted}"
+    msg.set_content(full)
+
+    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as s:
+        s.login(SMTP_USERNAME, SMTP_PASSWORD)
+        s.send_message(msg)
+
+    try:
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        mail.login(IMAP_EMAIL, IMAP_PASSWORD)
+        mail.append(IMAP_SENT_FOLDER, "\\Seen", imaplib.Time2Internaldate(time.time()), msg.as_bytes())
+        mail.logout()
+    except Exception as e:
+        print(f"Warning: failed to append to Sent folder '{IMAP_SENT_FOLDER}': {e}")
