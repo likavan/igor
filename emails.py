@@ -95,8 +95,9 @@ def send_reply(to_addr, subject, body, reply_to_msgid, references, original_from
         msg["In-Reply-To"] = reply_to_msgid
         chain = f"{references} {reply_to_msgid}".strip() if references else reply_to_msgid
         msg["References"] = chain
+    signature = "S pozdravom,\nMartin Likavčan\n— \nmartin.likavcan@digitalka.sk\n+421908558871"
     quoted = "\n".join(f"> {line}" for line in (original_body_clean or "").splitlines())
-    full = f"{body}\n\nDňa {original_date}, {original_from} napísal:\n{quoted}"
+    full = f"{body}\n\n{signature}\n\nDňa {original_date}, {original_from} napísal:\n{quoted}"
     msg.set_content(full)
 
     if SMTP_PORT == 465:
