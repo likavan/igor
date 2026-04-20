@@ -19,35 +19,26 @@ email_cache = {}
 gitlab_cache = {}
 
 
-def format_todo_item(todo):
+def format_todo_list(todos):
+    msg = "📝 <b>Tvoje úlohy:</b>\n\n"
     now = datetime.now(TZ)
-    try:
-        created = datetime.strptime(todo[2], "%Y-%m-%d %H:%M")
-        days = (now - created.replace(tzinfo=TZ)).days
-    except Exception:
-        days = 0
-    if days > 10:
-        icon = "🔴"
-    elif days > 5:
-        icon = "🟠"
-    else:
-        icon = "🟢"
-    if todo[3]:
-        msg = f"{icon} <s>{escape(todo[1])}</s> <i>({days}d, id:{todo[0]})</i>"
-        keyboard = None
-    else:
-        msg = f"{icon} {escape(todo[1])} <i>({days}d, id:{todo[0]})</i>"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Hotovo", callback_data=f"td_done_{todo[0]}"),
-        ]])
-    return msg, keyboard
-
-
-async def send_todo_list(send_func, todos):
-    await send_func("📝 <b>Tvoje úlohy:</b>", parse_mode="HTML")
     for t in todos:
-        msg, keyboard = format_todo_item(t)
-        await send_func(msg, parse_mode="HTML", reply_markup=keyboard)
+        try:
+            created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
+            days = (now - created.replace(tzinfo=TZ)).days
+        except Exception:
+            days = 0
+        if days > 10:
+            icon = "🔴"
+        elif days > 5:
+            icon = "🟠"
+        else:
+            icon = "🟢"
+        if t[3]:
+            msg += f"{icon} <s>{escape(t[1])}</s> <i>({days}d, id:{t[0]})</i>\n"
+        else:
+            msg += f"{icon} {escape(t[1])} <i>({days}d, id:{t[0]})</i>\n"
+    return msg
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -226,7 +217,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not todos:
                 await update.message.reply_text("Nemáš žiadne úlohy.")
             else:
-                await send_todo_list(update.message.reply_text, todos)
+                await update.message.reply_text(format_todo_list(todos), parse_mode="HTML")
         elif action == "DELETE":
             todo_id = int(parts[2].strip())
             delete_todo(todo_id)
@@ -269,7 +260,7 @@ async def list_todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not todos:
         await update.message.reply_text("Nemáš žiadne úlohy.")
         return
-    await send_todo_list(update.message.reply_text, todos)
+    await update.message.reply_text(format_todo_list(todos), parse_mode="HTML")
 
 
 async def todo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -488,14 +479,4 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
-        return
-    if raw.startswith("td_done_"):
-        todo_id = int(raw.split("_")[-1])
-        mark_todo_done(todo_id)
-        todos = [t for t in get_todos(include_done=True) if t[0] == todo_id]
-        if todos:
-            msg, _ = format_todo_item(todos[0])
-            await query.edit_message_text(msg, parse_mode="HTML")
-        else:
-            await query.edit_message_text("✅ Úloha splnená.")
         return
