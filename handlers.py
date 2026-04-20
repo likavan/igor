@@ -1,3 +1,4 @@
+import re
 from html import escape, unescape
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -421,12 +422,80 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="HTML")
 
 
+_QUOTE_PATTERNS = [
+    re.compile(r'\n\s*>', re.MULTILINE),
+    re.compile(r'\n\s*On .+ wrote:', re.IGNORECASE),
+    re.compile(r'\n\s*Dňa .+ (napísal|pís|wrote)', re.IGNORECASE),
+    re.compile(r'\n\s*-----\s*Original Message\s*-----', re.IGNORECASE),
+    re.compile(r'\n\s*-----\s*Pôvodná správa\s*-----', re.IGNORECASE),
+    re.compile(r'\n\s*From:\s.+\n\s*(Sent|Date):', re.IGNORECASE),
+    re.compile(r'\n\s*Od:\s.+\n\s*(Odoslané|Dátum):', re.IGNORECASE),
+]
+
+
+def _clean_email_body(body):
+    if "<html" in body.lower() or "<body" in body.lower():
+        body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
+        body = re.sub(r'<script[^>]*>.*?</script>', '', body, flags=re.DOTALL)
+        body = re.sub(r'<br\s*/?>', '\n', body, flags=re.IGNORECASE)
+        body = re.sub(r'</p>', '\n\n', body, flags=re.IGNORECASE)
+        body = re.sub(r'</div>', '\n', body, flags=re.IGNORECASE)
+        body = re.sub(r'</tr>', '\n', body, flags=re.IGNORECASE)
+        body = re.sub(r'</li>', '\n', body, flags=re.IGNORECASE)
+        body = re.sub(r'<[^>]+>', '', body)
+        body = unescape(body)
+        body = re.sub(r'[ \t]+', ' ', body)
+        body = re.sub(r'\n ', '\n', body)
+        body = re.sub(r'\n{3,}', '\n\n', body)
+        body = body.strip()
+    return body
+
+
+def _split_latest_reply(body):
+    earliest = len(body)
+    for pattern in _QUOTE_PATTERNS:
+        m = pattern.search(body)
+        if m and m.start() < earliest:
+            earliest = m.start()
+    if earliest < len(body):
+        return body[:earliest].rstrip(), body[earliest:].strip()
+    return body, ""
+
+
+def _truncate(body, limit=3500):
+    if len(body) > limit:
+        return body[:limit] + "\n\n... (skrátené)"
+    return body
+
+
+def _email_header(cached):
+    return (
+        f"📩 <b>{escape(cached['subject'])}</b>\n"
+        f"<b>Od:</b> {escape(cached['from'])}\n"
+        f"<b>Dátum:</b> {escape(cached['date'])}\n"
+        f"{'─' * 20}\n\n"
+    )
+
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != YOUR_CHAT_ID:
         return
     await query.answer()
     raw = query.data
+    if raw.startswith("mf_"):
+        key = raw[3:]
+        cached = email_cache.get(key)
+        if cached is None:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
+            return
+        body = _clean_email_body(cached["body"] or "")
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=_email_header(cached) + escape(_truncate(body)),
+            parse_mode="HTML",
+        )
+        return
     if raw.startswith("em"):
         cached = email_cache.get(raw)
         if cached is None:
@@ -436,33 +505,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not body:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email nemá textový obsah.")
             return
-        import re
-        if "<html" in body.lower() or "<body" in body.lower():
-            body = re.sub(r'<style[^>]*>.*?</style>', '', body, flags=re.DOTALL)
-            body = re.sub(r'<script[^>]*>.*?</script>', '', body, flags=re.DOTALL)
-            body = re.sub(r'<br\s*/?>', '\n', body, flags=re.IGNORECASE)
-            body = re.sub(r'</p>', '\n\n', body, flags=re.IGNORECASE)
-            body = re.sub(r'</div>', '\n', body, flags=re.IGNORECASE)
-            body = re.sub(r'</tr>', '\n', body, flags=re.IGNORECASE)
-            body = re.sub(r'</li>', '\n', body, flags=re.IGNORECASE)
-            body = re.sub(r'<[^>]+>', '', body)
-            body = unescape(body)
-            body = re.sub(r'[ \t]+', ' ', body)
-            body = re.sub(r'\n ', '\n', body)
-            body = re.sub(r'\n{3,}', '\n\n', body)
-            body = body.strip()
-        if len(body) > 3500:
-            body = body[:3500] + "\n\n... (skrátené)"
-        header = (
-            f"📩 <b>{escape(cached['subject'])}</b>\n"
-            f"<b>Od:</b> {escape(cached['from'])}\n"
-            f"<b>Dátum:</b> {escape(cached['date'])}\n"
-            f"{'─' * 20}\n\n"
-        )
+        body = _clean_email_body(body)
+        latest, rest = _split_latest_reply(body)
+        keyboard = None
+        if rest:
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📜 Zobraziť celé vlákno", callback_data=f"mf_{raw}"),
+            ]])
         await context.bot.send_message(
             chat_id=YOUR_CHAT_ID,
-            text=header + escape(body),
+            text=_email_header(cached) + escape(_truncate(latest)),
             parse_mode="HTML",
+            reply_markup=keyboard,
         )
         return
     if raw.startswith("gl"):
