@@ -113,9 +113,13 @@ Ak nejde o žiadnu akciu, odpovedaj normálne.""",
 
 def generate_reply_draft(subject, from_label, body_clean):
     prompt = (
-        "Napíš koncept odpovede na tento email. Stručne, profesionálne, po slovensky. "
-        "NEPRIDÁVAJ podpis (doplní sa automaticky). NEPRIDÁVAJ záverečný pozdrav ako 'S pozdravom'. "
-        "Výstupom nech je len samotný text odpovede, bez úvodného komentára.\n\n"
+        "Napíš koncept odpovede na tento email po slovensky. "
+        "Tón: vecný, priateľský, profesionálny, ale NIE podliezavý. "
+        "Choď rovno k veci — žiadne frázy typu 'ďakujem za Váš email', 'teším sa na spoluprácu', "
+        "'je pre mňa cťou', 'veľmi si vážim'. Oslovenie tykaj/vykaj tak ako odosielateľ v origináli. "
+        "Krátke vety, len nevyhnutné informácie. "
+        "NEPRIDÁVAJ podpis ani záverečný pozdrav ('S pozdravom', 'Pekný deň' atď.) — doplní sa automaticky. "
+        "Výstupom je len samotný text odpovede, bez úvodného komentára.\n\n"
         f"Od: {from_label}\n"
         f"Predmet: {subject}\n\n"
         f"Obsah:\n{body_clean}"
