@@ -22,6 +22,7 @@ gitlab_cache = {}
 def format_todo_list(todos):
     msg = "📝 <b>Tvoje úlohy:</b>\n\n"
     now = datetime.now(TZ)
+    keyboard = []
     for t in todos:
         try:
             created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
@@ -38,7 +39,9 @@ def format_todo_list(todos):
             msg += f"{icon} <s>{escape(t[1])}</s> <i>({days}d, id:{t[0]})</i>\n"
         else:
             msg += f"{icon} {escape(t[1])} <i>({days}d, id:{t[0]})</i>\n"
-    return msg
+            label = f"✅ {t[1][:40]}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"td_done_{t[0]}")])
+    return msg, keyboard
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -217,7 +220,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not todos:
                 await update.message.reply_text("Nemáš žiadne úlohy.")
             else:
-                await update.message.reply_text(format_todo_list(todos), parse_mode="HTML")
+                msg, keyboard = format_todo_list(todos)
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
         elif action == "DELETE":
             todo_id = int(parts[2].strip())
             delete_todo(todo_id)
@@ -260,7 +264,8 @@ async def list_todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not todos:
         await update.message.reply_text("Nemáš žiadne úlohy.")
         return
-    await update.message.reply_text(format_todo_list(todos), parse_mode="HTML")
+    msg, keyboard = format_todo_list(todos)
+    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
 
 
 async def todo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -479,3 +484,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
+        return
+    if raw.startswith("td_done_"):
+        todo_id = int(raw.split("_")[-1])
+        mark_todo_done(todo_id)
+        todos = get_todos(include_done=True)
+        if not todos:
+            await query.edit_message_text("Nemáš žiadne úlohy.")
+            return
+        msg, keyboard = format_todo_list(todos)
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
+        return
