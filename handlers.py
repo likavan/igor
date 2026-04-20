@@ -111,12 +111,30 @@ Ak nejde o žiadnu akciu, odpovedaj normálne.""",
     return reply
 
 
+def generate_reply_draft(subject, from_label, body_clean):
+    prompt = (
+        "Napíš koncept odpovede na tento email. Stručne, profesionálne, po slovensky. "
+        "NEPRIDÁVAJ podpis (doplní sa automaticky). NEPRIDÁVAJ záverečný pozdrav ako 'S pozdravom'. "
+        "Výstupom nech je len samotný text odpovede, bez úvodného komentára.\n\n"
+        f"Od: {from_label}\n"
+        f"Predmet: {subject}\n\n"
+        f"Obsah:\n{body_clean}"
+    )
+    response = gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        config=types.GenerateContentConfig(max_output_tokens=600),
+    )
+    return (response.text or "").strip()
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     user_message = update.message.text
     if update.message.reply_to_message and YOUR_CHAT_ID in pending_reply:
-        key = pending_reply.pop(YOUR_CHAT_ID)
+        data = pending_reply.pop(YOUR_CHAT_ID)
+        key = data["key"]
         cached = email_cache.get(key)
         if not cached:
             await update.message.reply_text("Email expiroval, skús znova /e")
@@ -527,6 +545,45 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
         return
+    if raw.startswith("repsend_"):
+        key = raw[8:]
+        data = pending_reply.pop(YOUR_CHAT_ID, None)
+        if not data or data.get("key") != key or not data.get("draft"):
+            await query.edit_message_text("Návrh expiroval, skús znova.")
+            return
+        cached = email_cache.get(key)
+        if not cached:
+            await query.edit_message_text("Email expiroval.")
+            return
+        try:
+            send_reply(
+                to_addr=cached["from_addr"],
+                subject=cached["subject"],
+                body=data["draft"],
+                reply_to_msgid=cached.get("message_id", ""),
+                references=cached.get("references", ""),
+                original_from=cached["from"],
+                original_date=cached["date"],
+                original_body_clean=_clean_email_body(cached.get("body", "")),
+            )
+            await query.edit_message_text(f"✉️ Odoslané: {escape(cached['from_addr'])}", parse_mode="HTML")
+        except Exception as e:
+            await query.edit_message_text(f"❌ Chyba pri odosielaní: {e}")
+        return
+    if raw.startswith("repedit_"):
+        key = raw[8:]
+        cached = email_cache.get(key)
+        if not cached:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval.")
+            return
+        pending_reply[YOUR_CHAT_ID] = {"key": key}
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=f"✏️ Napíš vlastnú odpoveď pre <b>{escape(cached['from_addr'])}</b>:",
+            parse_mode="HTML",
+            reply_markup=ForceReply(input_field_placeholder="Napíš odpoveď..."),
+        )
+        return
     if raw.startswith("rep_"):
         key = raw[4:]
         cached = email_cache.get(key)
@@ -536,13 +593,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not cached.get("from_addr"):
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Nemám adresu odosielateľa.")
             return
-        pending_reply[YOUR_CHAT_ID] = key
-        await context.bot.send_message(
-            chat_id=YOUR_CHAT_ID,
-            text=f"💬 <b>Odpoveď na:</b> {escape(cached['subject'])}\n<b>Komu:</b> {escape(cached['from_addr'])}",
-            parse_mode="HTML",
-            reply_markup=ForceReply(input_field_placeholder="Napíš odpoveď..."),
+        msg_obj = await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="⏳ Pripravujem návrh...")
+        try:
+            clean_body = _clean_email_body(cached.get("body", ""))
+            latest, _ = _split_latest_reply(clean_body)
+            draft = generate_reply_draft(cached["subject"], cached["from"], latest or clean_body)
+        except Exception as e:
+            await msg_obj.edit_text(f"❌ Chyba Gemini: {e}")
+            return
+        if not draft:
+            await msg_obj.edit_text("Gemini nevrátil žiadny návrh.")
+            return
+        pending_reply[YOUR_CHAT_ID] = {"key": key, "draft": draft}
+        text = (
+            f"💬 <b>Návrh odpovede</b> ({escape(cached['from_addr'])})\n\n"
+            f"{escape(draft)}"
         )
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Odoslať", callback_data=f"repsend_{key}"),
+            InlineKeyboardButton("✏️ Prepísať", callback_data=f"repedit_{key}"),
+        ]])
+        await msg_obj.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
         return
     if raw.startswith("em"):
         cached = email_cache.get(raw)
