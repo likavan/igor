@@ -111,13 +111,25 @@ Ak nejde o žiadnu akciu, odpovedaj normálne.""",
     return reply
 
 
-def generate_reply_draft(subject, from_label, body_clean):
+_TONE_INSTRUCTIONS = {
+    "friendly": (
+        "Tón: priateľský, prívetivý, ľudský — ale NIE podliezavý. "
+        "Žiadne frázy typu 'ďakujem za email', 'teším sa na spoluprácu', 'veľmi si vážim'. "
+        "Tykanie/vykanie prispôsob originálu. Krátke, osobné, priame vety."
+    ),
+    "professional": (
+        "Tón: jednoduchý, vecný, profesionálny. "
+        "Bez zbytočností, bez fráz typu 'ďakujem za Váš email', 'teším sa na spoluprácu'. "
+        "Tykanie/vykanie prispôsob originálu. Krátke vety, len nevyhnutné informácie."
+    ),
+}
+
+
+def generate_reply_draft(subject, from_label, body_clean, tone="friendly"):
+    tone_instr = _TONE_INSTRUCTIONS.get(tone, _TONE_INSTRUCTIONS["friendly"])
     prompt = (
         "Napíš koncept odpovede na tento email po slovensky. "
-        "Tón: vecný, priateľský, profesionálny, ale NIE podliezavý. "
-        "Choď rovno k veci — žiadne frázy typu 'ďakujem za Váš email', 'teším sa na spoluprácu', "
-        "'je pre mňa cťou', 'veľmi si vážim'. Oslovenie tykaj/vykaj tak ako odosielateľ v origináli. "
-        "Krátke vety, len nevyhnutné informácie. "
+        f"{tone_instr} "
         "NEPRIDÁVAJ podpis ani záverečný pozdrav ('S pozdravom', 'Pekný deň' atď.) — doplní sa automaticky. "
         "Výstupom je len samotný text odpovede, bez úvodného komentára.\n\n"
         f"Od: {from_label}\n"
@@ -593,8 +605,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ForceReply(input_field_placeholder="Napíš odpoveď..."),
         )
         return
-    if raw.startswith("rep_"):
-        key = raw[4:]
+    if raw.startswith("repo_"):
+        key = raw[5:]
         cached = email_cache.get(key)
         if cached is None:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
@@ -602,11 +614,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not cached.get("from_addr"):
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Nemám adresu odosielateľa.")
             return
-        msg_obj = await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="⏳ Pripravujem návrh...")
+        pending_reply[YOUR_CHAT_ID] = {"key": key}
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text=f"✏️ Napíš vlastnú odpoveď pre <b>{escape(cached['from_addr'])}</b>:",
+            parse_mode="HTML",
+            reply_markup=ForceReply(input_field_placeholder="Napíš odpoveď..."),
+        )
+        return
+    if raw.startswith("repf_") or raw.startswith("repp_"):
+        tone = "friendly" if raw.startswith("repf_") else "professional"
+        key = raw[5:]
+        cached = email_cache.get(key)
+        if cached is None:
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Email expiroval, skús znova /e")
+            return
+        if not cached.get("from_addr"):
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Nemám adresu odosielateľa.")
+            return
+        tone_label = "priateľský" if tone == "friendly" else "profi"
+        msg_obj = await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=f"⏳ Pripravujem {tone_label} návrh...")
         try:
             clean_body = _clean_email_body(cached.get("body", ""))
             latest, _ = _split_latest_reply(clean_body)
-            draft = generate_reply_draft(cached["subject"], cached["from"], latest or clean_body)
+            draft = generate_reply_draft(cached["subject"], cached["from"], latest or clean_body, tone=tone)
         except Exception as e:
             await msg_obj.edit_text(f"❌ Chyba Gemini: {e}")
             return
@@ -614,8 +645,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg_obj.edit_text("Gemini nevrátil žiadny návrh.")
             return
         pending_reply[YOUR_CHAT_ID] = {"key": key, "draft": draft}
+        icon = "😊" if tone == "friendly" else "💼"
         text = (
-            f"💬 <b>Návrh odpovede</b> ({escape(cached['from_addr'])})\n\n"
+            f"{icon} <b>Návrh ({tone_label})</b> pre {escape(cached['from_addr'])}\n\n"
             f"{escape(draft)}"
         )
         keyboard = InlineKeyboardMarkup([[
@@ -639,7 +671,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if rest:
             buttons.append([InlineKeyboardButton("📜 Zobraziť celé vlákno", callback_data=f"mf_{raw}")])
         if cached.get("from_addr"):
-            buttons.append([InlineKeyboardButton("💬 Odpovedať", callback_data=f"rep_{raw}")])
+            buttons.append([
+                InlineKeyboardButton("😊 Priateľsky", callback_data=f"repf_{raw}"),
+                InlineKeyboardButton("💼 Profi", callback_data=f"repp_{raw}"),
+                InlineKeyboardButton("✏️ Vlastná", callback_data=f"repo_{raw}"),
+            ])
         keyboard = InlineKeyboardMarkup(buttons) if buttons else None
         await context.bot.send_message(
             chat_id=YOUR_CHAT_ID,
