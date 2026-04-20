@@ -1,8 +1,7 @@
-import json
 from html import escape, unescape
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
-from telegram.ext import ContextTypes, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY, YOUR_CHAT_ID, TZ
@@ -10,25 +9,14 @@ from db import (
     add_reminder, get_pending_reminders, get_todays_reminders, mark_done, parse_relative_datetime,
     is_email_notified, mark_email_notified,
     add_todo, get_todos, mark_todo_done, delete_todo, edit_todo,
-    create_project, get_projects, delete_project, add_subtask, get_subtasks, get_subtask,
-    mark_subtask_done, edit_subtask_text, edit_subtask_notes, delete_subtask, get_project_by_id,
-    add_triage_task, get_triage_tasks, get_triage_task, mark_triage_done, delete_triage_task,
-    set_triage_deadline, set_triage_waiting, triage_task_exists,
 )
 from emails import fetch_emails
-from gitlab import search_projects, create_issue, list_my_issues, sync_my_issues
-from triage import (
-    COLS, score_and_recalc, recalculate_and_save, format_triage_task,
-    get_displacement_report, get_top_tasks, get_alert_tasks, get_score_icon,
-    THIS_WEEK_MIN,
-)
+from gitlab import search_projects, create_issue, list_my_issues
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 conversation_history = []
 email_cache = {}
 gitlab_cache = {}
-gitlab_sync_cache = {}
-pending_edit = {}
 
 
 def format_todo_list(todos):
@@ -51,51 +39,6 @@ def format_todo_list(todos):
         else:
             msg += f"{icon} {escape(t[1])} <i>({days}d, id:{t[0]})</i>\n"
     return msg
-
-
-def format_project_header(project, subtasks):
-    done = sum(1 for s in subtasks if s[2])
-    total = len(subtasks)
-    return f"📂 <b>{escape(project[1])}</b> <i>(id:{project[0]})</i> ({done}/{total})"
-
-
-def format_subtask_message(s):
-    # s from get_subtasks: (id, text, done, notes)
-    # s from get_subtask:  (id, project_id, text, done, notes)
-    if len(s) == 5:
-        sid, text, done, notes = s[0], s[2], s[3], s[4]
-    else:
-        sid, text, done, notes = s[0], s[1], s[2], s[3]
-    icon = "✅" if done else "⬜"
-    msg = f"{icon} {escape(str(text))}"
-    if notes:
-        msg += f"\n📝 <i>{escape(str(notes))}</i>"
-    msg += f" <i>(id:{sid})</i>"
-    if not done:
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Hotovo", callback_data=f"pt_done_{sid}"),
-                InlineKeyboardButton("🗑️ Vymazať", callback_data=f"pt_del_{sid}"),
-            ],
-            [
-                InlineKeyboardButton("✏️ Podúloha", callback_data=f"pt_etxt_{sid}"),
-                InlineKeyboardButton("📝 Poznámka", callback_data=f"pt_edit_{sid}"),
-            ],
-        ])
-    else:
-        keyboard = None
-    return msg, keyboard
-
-
-async def send_project_detail(send_func, project, subtasks):
-    header = format_project_header(project, subtasks)
-    if not subtasks:
-        await send_func(header + "\n\n<i>Žiadne podúlohy.</i>", parse_mode="HTML")
-        return
-    await send_func(header, parse_mode="HTML")
-    for s in subtasks:
-        msg, keyboard = format_subtask_message(s)
-        await send_func(msg, parse_mode="HTML", reply_markup=keyboard)
 
 
 def format_email_list(emails, title, highlight_unseen=False):
@@ -124,7 +67,7 @@ async def ask_gemini(user_message):
             max_output_tokens=1000,
             system_instruction="""Si Igor, osobný asistent Martina. Tvoje meno je Igor. Komunikuješ po slovensky, si stručný a praktický.
 
-Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte. Tvoja odpoveď musí začínať príslušným prefixom (REMINDER|, EMAIL|, GITLAB|, TODO|, PROJECT|) a nesmie obsahovať nič iné.
+Ak chce Martin vykonať akciu, odpovedz PRESNE v danom formáte. Tvoja odpoveď musí začínať príslušným prefixom (REMINDER|, EMAIL|, GITLAB|, TODO|) a nesmie obsahovať nič iné.
 
 Dostupné akcie:
 
@@ -148,29 +91,6 @@ Dostupné akcie:
    TODO|EDIT|id|nový text — uprav úlohu
    Príklady: TODO|ADD|Opraviť faktúru   TODO|LIST   TODO|DONE|3
 
-5) PROJECT|CREATE|názov — vytvor projekt
-   PROJECT|ADD|id_projektu|názov podúlohy|poznámka — pridaj podúlohu (poznámka voliteľná)
-   PROJECT|EDIT_TASK|id_podúlohy|nový text — uprav text podúlohy (POZOR: toto je iné ako TODO|EDIT, toto upravuje podúlohu v projekte)
-   PROJECT|DONE_TASK|id_podúlohy — označ podúlohu ako hotovú
-   PROJECT|LIST — zobraz projekty
-   PROJECT|SHOW|id_projektu — detail projektu
-   PROJECT|DELETE|id_projektu — vymaž projekt
-   Príklady: PROJECT|CREATE|Redizajn webu   PROJECT|ADD|1|Návrh wireframe|Použiť Figmu   PROJECT|EDIT_TASK|2|Napísať hromadný mail   PROJECT|DONE_TASK|3   PROJECT|SHOW|1
-
-6) TRIAGE|SYNC — sync GitLab issues do triage queue
-   TRIAGE|QUEUE — zobraz neohodnotené úlohy
-   TRIAGE|SCORE|id|hodnota — ohodnoť úlohu (hodnota 1-5)
-   TRIAGE|ADD|názov|tier|čas_min|hodnota|deadline — pridaj manuálnu úlohu (tier: forced/negotiable/self, čas v minútach, hodnota 1-5, deadline YYYY-MM-DD; tier/čas/hodnota/deadline voliteľné)
-   TRIAGE|LIST — rebríček úloh podľa priority score
-   TRIAGE|DONE|id — označ triage úlohu ako hotovú
-   TRIAGE|DEADLINE|id|YYYY-MM-DD — nastav/zmeň deadline triage úlohy
-   TRIAGE|WAITING|id|kto — nastav kto čaká (none/internal/client). client = klient alebo šéf čaká (+3 score), internal = interný kolega čaká (+1)
-   TRIAGE|DELETE|id — vymaž triage úlohu
-   TRIAGE|FORCE|názov|čas_min — pridaj forced úlohu (šéf/klient príkaz), čas v minútach
-   Príklady: TRIAGE|SYNC   TRIAGE|SCORE|5|4   TRIAGE|ADD|Opraviť deploy|self|120|3|2026-04-20   TRIAGE|ADD|Niečo rýchle|||2||   TRIAGE|FORCE|Hotfix login|240   TRIAGE|DELETE|3   TRIAGE|LIST
-
-DÔLEŽITÉ: Ak Martin hovorí o podúlohe/subtasku v projekte, použi PROJECT|. Ak hovorí o úlohe v todo liste, použi TODO|. Ak hovorí o prioritizácii, triage, scoring, alebo "sync gitlab", použi TRIAGE|.
-
 Ak nejde o žiadnu akciu, odpovedaj normálne.""",
         ),
     )
@@ -184,26 +104,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     user_message = update.message.text
-    if update.message.reply_to_message and YOUR_CHAT_ID in pending_edit:
-        edit_data = pending_edit.pop(YOUR_CHAT_ID)
-        subtask_id = edit_data["id"]
-        if edit_data["type"] == "notes":
-            edit_subtask_notes(subtask_id, user_message)
-        else:
-            edit_subtask_text(subtask_id, user_message)
-        subtask = get_subtask(subtask_id)
-        if subtask:
-            msg, keyboard = format_subtask_message(subtask)
-            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
-        else:
-            await update.message.reply_text("✏️ Uložené.")
-        return
     await update.message.reply_text("⏳ Premýšľam...")
     reply = await ask_gemini(user_message)
     print(f"Gemini reply: {reply[:200]}")
     for line in reply.strip().splitlines():
         line = line.strip()
-        if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|", "PROJECT|")):
+        if line.startswith(("REMINDER|", "EMAIL|", "GITLAB|", "TODO|")):
             reply = line
             break
     if reply.startswith("REMINDER|"):
@@ -325,249 +231,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_text = parts[3].strip()
             edit_todo(todo_id, new_text)
             await update.message.reply_text(f"✏️ Úloha {todo_id} upravená: {new_text}")
-    elif reply.startswith("PROJECT|"):
-        parts = reply.split("|")
-        action = parts[1].strip()
-        if action == "CREATE":
-            name = parts[2].strip()
-            project_id = create_project(name)
-            await update.message.reply_text(f"📂 Projekt vytvorený: <b>{escape(name)}</b> (id:{project_id})", parse_mode="HTML")
-        elif action == "ADD":
-            project_id = int(parts[2].strip())
-            text = parts[3].strip()
-            notes = parts[4].strip() if len(parts) > 4 else ""
-            subtask_id = add_subtask(project_id, text, notes)
-            project = get_project_by_id(project_id)
-            pname = escape(project[1]) if project else f"#{project_id}"
-            await update.message.reply_text(f"✅ Podúloha pridaná do <b>{pname}</b>:", parse_mode="HTML")
-            subtask = get_subtask(subtask_id)
-            msg, keyboard = format_subtask_message(subtask)
-            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
-        elif action == "EDIT_TASK":
-            subtask_id = int(parts[2].strip())
-            new_text = parts[3].strip()
-            edit_subtask_text(subtask_id, new_text)
-            subtask = get_subtask(subtask_id)
-            if subtask:
-                msg, keyboard = format_subtask_message(subtask)
-                await update.message.reply_text(f"✏️ Podúloha upravená:", parse_mode="HTML")
-                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
-            else:
-                await update.message.reply_text(f"✏️ Podúloha {subtask_id} upravená: {new_text}")
-        elif action == "DONE_TASK":
-            subtask_id = int(parts[2].strip())
-            mark_subtask_done(subtask_id)
-            subtask = get_subtask(subtask_id)
-            if subtask:
-                msg, keyboard = format_subtask_message(subtask)
-                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
-            else:
-                await update.message.reply_text("✅ Podúloha splnená.")
-        elif action == "LIST":
-            projects = get_projects()
-            if not projects:
-                await update.message.reply_text("Nemáš žiadne projekty.")
-            else:
-                msg = "📂 <b>Tvoje projekty:</b>\n\n"
-                for p in projects:
-                    subtasks = get_subtasks(p[0])
-                    done = sum(1 for s in subtasks if s[2])
-                    total = len(subtasks)
-                    msg += f"• <b>{escape(p[1])}</b> ({done}/{total}) <i>(id:{p[0]})</i>\n"
-                await update.message.reply_text(msg, parse_mode="HTML")
-        elif action == "SHOW":
-            project_id = int(parts[2].strip())
-            project = get_project_by_id(project_id)
-            if not project:
-                await update.message.reply_text("Projekt neexistuje.")
-            else:
-                subtasks = get_subtasks(project_id)
-                await send_project_detail(update.message.reply_text, project, subtasks)
-        elif action == "DELETE":
-            project_id = int(parts[2].strip())
-            delete_project(project_id)
-            await update.message.reply_text("🗑️ Projekt vymazaný.")
-    elif reply.startswith("TRIAGE|"):
-        parts = reply.split("|")
-        action = parts[1].strip()
-        try:
-            if action == "SYNC":
-                issues = sync_my_issues()
-                new_issues = [i for i in issues if not triage_task_exists("gitlab", i["source_id"])]
-                if not new_issues:
-                    await update.message.reply_text("Ziadne nove issues z GitLabu.")
-                else:
-                    await _show_gitlab_picker(update.message.reply_text, new_issues)
-            elif action == "QUEUE":
-                unscored = get_triage_tasks(only_unscored=True)
-                if not unscored:
-                    await update.message.reply_text("Ziadne neohodnotene ulohy.")
-                else:
-                    await _show_triage_queue(update.message.reply_text, unscored)
-            elif action == "SCORE":
-                task_id = int(parts[2].strip())
-                value = int(parts[3].strip())
-                if value < 1 or value > 5:
-                    await update.message.reply_text("Hodnota musi byt 1-5.")
-                    return
-                score = score_and_recalc(task_id, value)
-                task = get_triage_task(task_id)
-                if task:
-                    msg = f"Ohodnotene: {format_triage_task(task)}"
-                    await update.message.reply_text(msg, parse_mode="HTML")
-                else:
-                    await update.message.reply_text(f"Uloha {task_id} neexistuje.")
-            elif action == "ADD":
-                title = parts[2].strip()
-                tier = parts[3].strip() if len(parts) > 3 and parts[3].strip() else "self"
-                time_est = int(parts[4].strip()) if len(parts) > 4 and parts[4].strip() else None
-                value = int(parts[5].strip()) if len(parts) > 5 and parts[5].strip() else None
-                due_date = parts[6].strip() if len(parts) > 6 and parts[6].strip() else None
-                task_id = add_triage_task(source="manual", title=title, tier=tier, time_estimate=time_est, value=value, due_date=due_date)
-                if value is not None:
-                    score_and_recalc(task_id, value)
-                task = get_triage_task(task_id)
-                msg = f"Triage uloha pridana:\n{format_triage_task(task)}"
-                if value is None:
-                    keyboard = _make_value_buttons(task_id)
-                    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
-                else:
-                    await update.message.reply_text(msg, parse_mode="HTML")
-            elif action == "LIST":
-                tasks = get_triage_tasks(only_open=True)
-                if not tasks:
-                    await update.message.reply_text("Ziadne triage ulohy.")
-                else:
-                    msg = "📊 <b>Triage rebricek:</b>\n\n"
-                    for t in tasks:
-                        msg += format_triage_task(t) + "\n"
-                    await update.message.reply_text(msg, parse_mode="HTML")
-            elif action == "DONE":
-                task_id = int(parts[2].strip())
-                mark_triage_done(task_id)
-                await update.message.reply_text("Triage uloha splnena.")
-            elif action == "DEADLINE":
-                task_id = int(parts[2].strip())
-                due_date = parts[3].strip()
-                set_triage_deadline(task_id, due_date)
-                score = recalculate_and_save(task_id)
-                task = get_triage_task(task_id)
-                if task:
-                    await update.message.reply_text(f"📅 Deadline nastaveny:\n{format_triage_task(task)}", parse_mode="HTML")
-                else:
-                    await update.message.reply_text(f"Uloha {task_id} neexistuje.")
-            elif action == "WAITING":
-                task_id = int(parts[2].strip())
-                waiting = parts[3].strip().lower()
-                if waiting not in ("none", "internal", "client"):
-                    await update.message.reply_text("Hodnota musi byt: none, internal, alebo client.")
-                    return
-                set_triage_waiting(task_id, waiting)
-                recalculate_and_save(task_id)
-                task = get_triage_task(task_id)
-                if task:
-                    await update.message.reply_text(f"👤 Waiting nastaveny:\n{format_triage_task(task)}", parse_mode="HTML")
-                else:
-                    await update.message.reply_text(f"Uloha {task_id} neexistuje.")
-            elif action == "DELETE":
-                task_id = int(parts[2].strip())
-                delete_triage_task(task_id)
-                await update.message.reply_text("🗑️ Triage uloha vymazana.")
-            elif action == "FORCE":
-                title = parts[2].strip()
-                time_est = int(parts[3].strip()) if len(parts) > 3 and parts[3].strip() else 120
-                task_id = add_triage_task(source="manual", title=title, tier="forced", time_estimate=time_est)
-                recalculate_and_save(task_id)
-                task = get_triage_task(task_id)
-                msg = f"⚡ FORCED uloha pridana:\n{format_triage_task(task)}\n"
-                displaced = get_displacement_report(time_est)
-                if displaced:
-                    msg += "\n<b>Vytlaci sa:</b>\n"
-                    for d in displaced:
-                        msg += f"  {format_triage_task(d)}\n"
-                await update.message.reply_text(msg, parse_mode="HTML")
-        except Exception as e:
-            await update.message.reply_text(f"Chyba triage: {e}")
     else:
         await update.message.reply_text(reply)
-
-
-def _make_value_buttons(task_id):
-    buttons = [
-        InlineKeyboardButton(f"{i}️⃣", callback_data=f"tr_val_{task_id}_{i}")
-        for i in range(1, 6)
-    ]
-    return InlineKeyboardMarkup([buttons])
-
-
-async def _show_gitlab_picker(send_func, issues):
-    await send_func(f"📋 <b>Nové GitLab issues ({len(issues)}):</b>\nVyber ktoré pridať do triage:", parse_mode="HTML")
-    for issue in issues:
-        cache_key = f"glsync_{issue['source_id']}"
-        gitlab_sync_cache[cache_key] = issue
-        time_est = issue.get("time_estimate")
-        time_str = ""
-        if time_est:
-            time_str = f" ({time_est // 60}h)" if time_est >= 60 else f" ({time_est}m)"
-        msg = f"<b>{escape(issue['title'])}</b>{time_str}"
-        if issue.get("tier") == "negotiable":
-            msg += " [NEG]"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("➕ Pridať", callback_data=f"tr_add_{cache_key}"),
-            InlineKeyboardButton("⏭️ Preskočiť", callback_data=f"tr_skip_{cache_key}"),
-        ]])
-        await send_func(msg, parse_mode="HTML", reply_markup=keyboard)
-
-
-async def _show_triage_queue(send_func, unscored):
-    msg = f"❓ <b>Neohodnotene ulohy ({len(unscored)}):</b>\n\n"
-    await send_func(msg, parse_mode="HTML")
-    for t in unscored:
-        tid = t[COLS["id"]]
-        title = t[COLS["title"]]
-        source = t[COLS["source"]]
-        time_est = t[COLS["time_estimate"]]
-        time_str = ""
-        if time_est:
-            if time_est < 60:
-                time_str = f" ({time_est}m)"
-            else:
-                time_str = f" ({time_est // 60}h)"
-        task_msg = f"<b>{title}</b>{time_str} <i>(src:{source}, id:{tid})</i>"
-        keyboard = _make_value_buttons(tid)
-        await send_func(task_msg, parse_mode="HTML", reply_markup=keyboard)
-
-
-async def triage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != YOUR_CHAT_ID:
-        return
-    arg = context.args[0].lower() if context.args else ""
-    if arg == "queue":
-        unscored = get_triage_tasks(only_unscored=True)
-        if not unscored:
-            await update.message.reply_text("Ziadne neohodnotene ulohy.")
-        else:
-            await _show_triage_queue(update.message.reply_text, unscored)
-    elif arg == "sync":
-        await update.message.reply_text("Syncujem GitLab...")
-        try:
-            issues = sync_my_issues()
-            new_issues = [i for i in issues if not triage_task_exists("gitlab", i["source_id"])]
-            if not new_issues:
-                await update.message.reply_text("Ziadne nove issues.")
-            else:
-                await _show_gitlab_picker(update.message.reply_text, new_issues)
-        except Exception as e:
-            await update.message.reply_text(f"Chyba GitLab sync: {e}")
-    else:
-        tasks = get_triage_tasks(only_open=True)
-        if not tasks:
-            await update.message.reply_text("Ziadne triage ulohy.")
-        else:
-            msg = "📊 <b>Triage rebricek:</b>\n\n"
-            for t in tasks:
-                msg += format_triage_task(t) + "\n"
-            await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -628,31 +293,6 @@ async def todo_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_text = " ".join(context.args[1:])
     edit_todo(todo_id, new_text)
     await update.message.reply_text(f"✏️ Úloha {todo_id} upravená: {new_text}")
-
-
-async def list_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != YOUR_CHAT_ID:
-        return
-    if context.args:
-        project_id = int(context.args[0])
-        project = get_project_by_id(project_id)
-        if not project:
-            await update.message.reply_text("Projekt neexistuje.")
-            return
-        subtasks = get_subtasks(project_id)
-        await send_project_detail(update.message.reply_text, project, subtasks)
-        return
-    projects = get_projects()
-    if not projects:
-        await update.message.reply_text("Nemáš žiadne projekty.")
-        return
-    msg = "📂 <b>Tvoje projekty:</b>\n\n"
-    for p in projects:
-        subtasks = get_subtasks(p[0])
-        done = sum(1 for s in subtasks if s[2])
-        total = len(subtasks)
-        msg += f"• <b>{escape(p[1])}</b> ({done}/{total}) <i>(id:{p[0]})</i>\n"
-    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -756,23 +396,7 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
                 icon = "🟢"
             msg += f"{icon} {t[1]} <i>({days}d)</i>\n"
         msg += "\n"
-    # Triage section
-    alert_tasks = get_alert_tasks()
-    if alert_tasks:
-        msg += "<b>🔴 URGENT triage úlohy (score 8+):</b>\n"
-        for t in alert_tasks:
-            msg += f"  {format_triage_task(t)}\n"
-        msg += "\n"
-    top_tasks = get_top_tasks(min_score=THIS_WEEK_MIN, limit=3)
-    if top_tasks:
-        msg += "<b>📊 Top úlohy na tento týždeň:</b>\n"
-        for t in top_tasks:
-            msg += f"  {format_triage_task(t)}\n"
-        msg += "\n"
-    unscored = get_triage_tasks(only_unscored=True)
-    if unscored:
-        msg += f"<b>❓ Neohodnotené úlohy:</b> {len(unscored)}\n\n"
-    if not reminders and not todos and not alert_tasks and not top_tasks:
+    if not reminders and not todos:
         msg += "Dnes nemáš žiadne pripomienky ani úlohy."
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
 
@@ -791,11 +415,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/td 3 — splniť úlohu č. 3\n"
         "/te 3 Nový text — upraviť úlohu č. 3\n"
         "/tx 3 — vymazať úlohu č. 3\n"
-        "/p — zoznam projektov\n"
-        "/p 1 — detail projektu č. 1\n"
-        "/tr — triage rebríček\n"
-        "/tr queue — neohodnotené úlohy\n"
-        "/tr sync — sync GitLab issues\n"
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )
@@ -860,83 +479,3 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"Chyba GitLab: {e}")
-    if raw.startswith("tr_add_"):
-        cache_key = raw[7:]  # strip "tr_add_"
-        issue = gitlab_sync_cache.pop(cache_key, None)
-        if not issue:
-            await query.edit_message_text("Issue expiroval, skús znova /tr sync")
-            return
-        if triage_task_exists("gitlab", issue["source_id"]):
-            await query.edit_message_text(f"<b>{escape(issue['title'])}</b> — už je v triage.", parse_mode="HTML")
-            return
-        task_id = add_triage_task(
-            source="gitlab", title=issue["title"], source_id=issue["source_id"],
-            gitlab_project_id=issue["project_id"], description=issue["description"],
-            tier=issue["tier"], time_estimate=issue["time_estimate"],
-            due_date=issue["due_date"], url=issue["url"],
-        )
-        keyboard = _make_value_buttons(task_id)
-        await query.edit_message_text(
-            f"✅ Pridané: <b>{escape(issue['title'])}</b>\nOhodnoť (1-5):",
-            parse_mode="HTML", reply_markup=keyboard,
-        )
-        return
-    if raw.startswith("tr_skip_"):
-        cache_key = raw[8:]  # strip "tr_skip_"
-        issue = gitlab_sync_cache.pop(cache_key, None)
-        title = escape(issue["title"]) if issue else "?"
-        await query.edit_message_text(f"⏭️ Preskočené: <b>{title}</b>", parse_mode="HTML")
-        return
-    if raw.startswith("tr_val_"):
-        # tr_val_{task_id}_{value}
-        parts = raw.split("_")
-        task_id = int(parts[2])
-        value = int(parts[3])
-        score = score_and_recalc(task_id, value)
-        task = get_triage_task(task_id)
-        if task:
-            msg = f"Ohodnotene: {format_triage_task(task)}"
-            await query.edit_message_text(msg, parse_mode="HTML")
-        else:
-            await query.edit_message_text("Uloha neexistuje.")
-        return
-    if raw.startswith("pt_done_"):
-        subtask_id = int(raw.split("_")[-1])
-        mark_subtask_done(subtask_id)
-        subtask = get_subtask(subtask_id)
-        if subtask:
-            msg, keyboard = format_subtask_message(subtask)
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
-        else:
-            await query.edit_message_text("✅ Podúloha splnená.")
-    elif raw.startswith("pt_del_"):
-        subtask_id = int(raw.split("_")[-1])
-        delete_subtask(subtask_id)
-        await query.edit_message_text("🗑️ Podúloha vymazaná.")
-    elif raw.startswith("pt_etxt_"):
-        subtask_id = int(raw.split("_")[-1])
-        subtask = get_subtask(subtask_id)
-        if not subtask:
-            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Podúloha neexistuje.")
-            return
-        pending_edit[YOUR_CHAT_ID] = {"id": subtask_id, "type": "text"}
-        await context.bot.send_message(
-            chat_id=YOUR_CHAT_ID,
-            text=f"✏️ Uprav podúlohu: <b>{escape(subtask[2])}</b>",
-            parse_mode="HTML",
-            reply_markup=ForceReply(input_field_placeholder=subtask[2]),
-        )
-    elif raw.startswith("pt_edit_"):
-        subtask_id = int(raw.split("_")[-1])
-        subtask = get_subtask(subtask_id)
-        if not subtask:
-            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text="Podúloha neexistuje.")
-            return
-        pending_edit[YOUR_CHAT_ID] = {"id": subtask_id, "type": "notes"}
-        current_notes = subtask[4] or ""
-        await context.bot.send_message(
-            chat_id=YOUR_CHAT_ID,
-            text=f"📝 Uprav poznámku pre: <b>{escape(subtask[2])}</b>",
-            parse_mode="HTML",
-            reply_markup=ForceReply(input_field_placeholder=current_notes if current_notes else "Poznámka..."),
-        )

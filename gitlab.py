@@ -48,36 +48,6 @@ def create_issue(project_id, title, description="", estimate=""):
     return result
 
 
-def sync_my_issues():
-    """Pull all assigned open issues with triage-relevant fields."""
-    resp = requests.get(
-        f"{GITLAB_URL}/api/v4/issues",
-        headers=HEADERS,
-        params={"state": "opened", "scope": "assigned_to_me", "per_page": 50, "order_by": "updated_at"},
-    )
-    resp.raise_for_status()
-    issues = []
-    for issue in resp.json():
-        labels = [l.lower() for l in issue.get("labels", [])]
-        tier = "self"
-        if any(l in labels for l in ("urgent", "critical", "blocker", "priority")):
-            tier = "negotiable"
-        time_est_seconds = issue.get("time_stats", {}).get("time_estimate", 0)
-        time_est_minutes = time_est_seconds // 60 if time_est_seconds else None
-        issues.append({
-            "iid": issue["iid"],
-            "project_id": issue.get("project_id"),
-            "title": issue["title"],
-            "description": (issue.get("description") or "")[:200],
-            "due_date": issue.get("due_date"),
-            "time_estimate": time_est_minutes,
-            "tier": tier,
-            "url": issue["web_url"],
-            "source_id": f"{issue.get('project_id')}_{issue['iid']}",
-        })
-    return issues
-
-
 def list_my_issues(state="opened"):
     resp = requests.get(
         f"{GITLAB_URL}/api/v4/issues",

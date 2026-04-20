@@ -6,7 +6,6 @@ from handlers import (
     handle_message, handle_callback, help_command,
     list_reminders, delete_reminder,
     list_todos, todo_done, todo_delete, todo_edit,
-    list_projects, triage_command,
     check_emails, check_new_emails,
     check_reminders, check_emails_periodic, morning_summary,
 )
@@ -30,8 +29,6 @@ def main():
     app.add_handler(CommandHandler("td", todo_done))
     app.add_handler(CommandHandler("te", todo_edit))
     app.add_handler(CommandHandler("tx", todo_delete))
-    app.add_handler(CommandHandler("p", list_projects))
-    app.add_handler(CommandHandler("tr", triage_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)

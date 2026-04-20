@@ -5,7 +5,7 @@
 **O**sobný  
 **R**obot
 
-Personal AI assistant running as a Telegram bot, powered by Gemini. Built to manage daily tasks, emails and work projects from a single chat interface.
+Personal AI assistant running as a Telegram bot, powered by Gemini. Built to manage daily tasks and emails from a single chat interface.
 
 ## Features
 
