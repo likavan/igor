@@ -1,7 +1,7 @@
 import re
 from html import escape, unescape
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 from google import genai
 from google.genai import types
@@ -19,6 +19,16 @@ conversation_history = []
 email_cache = {}
 gitlab_cache = {}
 pending_reply = {}
+
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton("📧 Emaily"), KeyboardButton("🆕 Nové")],
+        [KeyboardButton("📋 Pripomienky"), KeyboardButton("📝 Úlohy")],
+        [KeyboardButton("❓ Pomoc")],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
 
 
 def format_todo_list(todos):
@@ -148,6 +158,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     user_message = update.message.text
+    if not (update.message.reply_to_message and YOUR_CHAT_ID in pending_reply):
+        if user_message == "📧 Emaily":
+            return await check_emails(update, context)
+        if user_message == "🆕 Nové":
+            return await check_new_emails(update, context)
+        if user_message == "📋 Pripomienky":
+            return await list_reminders(update, context)
+        if user_message == "📝 Úlohy":
+            return await list_todos(update, context)
+        if user_message == "❓ Pomoc":
+            return await help_command(update, context)
     if update.message.reply_to_message and YOUR_CHAT_ID in pending_reply:
         data = pending_reply.pop(YOUR_CHAT_ID)
         key = data["key"]
@@ -484,7 +505,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/h — táto nápoveda\n\n"
         "Alebo mi napíš čokoľvek 💬"
     )
-    await update.message.reply_text(msg, parse_mode="HTML")
+    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=MAIN_KEYBOARD)
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    await update.message.reply_text(
+        "👋 Som Igor. Použi tlačidlá pod chatom, /menu alebo mi rovno napíš.",
+        reply_markup=MAIN_KEYBOARD,
+    )
 
 
 _QUOTE_PATTERNS = [
