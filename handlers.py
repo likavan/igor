@@ -21,11 +21,7 @@ gitlab_cache = {}
 pending_reply = {}
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        [KeyboardButton("📧 Emaily"), KeyboardButton("🆕 Nové")],
-        [KeyboardButton("📋 Pripomienky"), KeyboardButton("📝 Úlohy")],
-        [KeyboardButton("❓ Pomoc")],
-    ],
+    [[KeyboardButton("/e"), KeyboardButton("/en"), KeyboardButton("/r"), KeyboardButton("/t"), KeyboardButton("/h")]],
     resize_keyboard=True,
     is_persistent=True,
 )
@@ -158,17 +154,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
     user_message = update.message.text
-    if not (update.message.reply_to_message and YOUR_CHAT_ID in pending_reply):
-        if user_message == "📧 Emaily":
-            return await check_emails(update, context)
-        if user_message == "🆕 Nové":
-            return await check_new_emails(update, context)
-        if user_message == "📋 Pripomienky":
-            return await list_reminders(update, context)
-        if user_message == "📝 Úlohy":
-            return await list_todos(update, context)
-        if user_message == "❓ Pomoc":
-            return await help_command(update, context)
     if update.message.reply_to_message and YOUR_CHAT_ID in pending_reply:
         data = pending_reply.pop(YOUR_CHAT_ID)
         key = data["key"]
