@@ -42,19 +42,24 @@ def extract_body(msg):
     return body
 
 
-def fetch_emails(count=5, unseen_only=False):
+def fetch_emails(count=5, unseen_only=False, since_dt=None):
     mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
     mail.login(IMAP_EMAIL, IMAP_PASSWORD)
     mail.select("INBOX")
-    criterion = "UNSEEN" if unseen_only else "ALL"
+    if since_dt is not None:
+        criterion = f'(SINCE "{since_dt.strftime("%d-%b-%Y")}")'
+    elif unseen_only:
+        criterion = "UNSEEN"
+    else:
+        criterion = "ALL"
     _, data = mail.search(None, criterion)
     ids = data[0].split()
     if not ids:
         mail.logout()
         return []
-    latest_ids = ids[-count:]
+    selected_ids = ids if since_dt is not None else ids[-count:]
     emails = []
-    for eid in reversed(latest_ids):
+    for eid in reversed(selected_ids):
         _, msg_data = mail.fetch(eid, "(BODY.PEEK[] FLAGS)")
         raw_flags = msg_data[0][0].decode() if msg_data[0][0] else ""
         unseen = "\\Seen" not in raw_flags
@@ -66,11 +71,14 @@ def fetch_emails(count=5, unseen_only=False):
         in_reply_to = msg["In-Reply-To"] or ""
         references = msg["References"] or ""
         date_raw = msg["Date"]
+        dt = None
         try:
             dt = email.utils.parsedate_to_datetime(date_raw).astimezone(TZ)
             date = dt.strftime("%d.%m.%Y %H:%M")
         except Exception:
             date = date_raw
+        if since_dt is not None and dt is not None and dt < since_dt:
+            continue
         body = extract_body(msg)
         emails.append({
             "from": sender, "from_addr": from_addr,

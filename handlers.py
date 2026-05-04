@@ -1,6 +1,6 @@
 import re
 from html import escape, unescape
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 from google import genai
@@ -453,35 +453,49 @@ async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+def get_morning_motivation():
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": [{"text": "Vymysli krátku motivačnú hlášku na dnešné ráno v slovenčine. Iba jedna veta, max 15 slov, bez emoji, bez úvodu, bez úvodzoviek."}]}],
+            config=types.GenerateContentConfig(max_output_tokens=80),
+        )
+        text = (response.text or "").strip().strip('"\'').strip()
+        if text:
+            return text
+    except Exception:
+        pass
+    return "Nový deň, nové možnosti."
+
+
 async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
-    msg = "🌅 Dobré ráno Martin!\n\n"
+    msg = "🌅 <b>Dobré ráno Martin!</b>\n\n"
+    msg += f"💪 <i>{escape(get_morning_motivation())}</i>\n\n"
+
+    todos = get_todos()
+    if todos:
+        msg += format_todo_list(todos) + "\n"
+
     reminders = get_todays_reminders()
     if reminders:
         msg += "<b>📅 Dnešné pripomienky:</b>\n"
         for r in reminders:
-            msg += f"• {r[1]} – {r[0]}\n"
+            msg += f"• {escape(r[1])} – {escape(r[0])}\n"
         msg += "\n"
-    todos = get_todos()
-    if todos:
-        now = datetime.now(TZ)
-        msg += "<b>📝 Otvorené úlohy:</b>\n"
-        for t in todos:
-            try:
-                created = datetime.strptime(t[2], "%Y-%m-%d %H:%M")
-                days = (now - created.replace(tzinfo=TZ)).days
-            except Exception:
-                days = 0
-            if days > 10:
-                icon = "🔴"
-            elif days > 5:
-                icon = "🟠"
-            else:
-                icon = "🟢"
-            msg += f"{icon} {t[1]} <i>({days}d)</i>\n"
-        msg += "\n"
-    if not reminders and not todos:
-        msg += "Dnes nemáš žiadne pripomienky ani úlohy."
-    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
+
+    now = datetime.now(TZ)
+    since = (now - timedelta(days=1)).replace(hour=15, minute=30, second=0, microsecond=0)
+    keyboard = []
+    try:
+        emails = fetch_emails(since_dt=since)
+    except Exception:
+        emails = []
+    if emails:
+        email_msg, keyboard = format_email_list(emails, f"Maily od {since.strftime('%d.%m. %H:%M')}", highlight_unseen=True)
+        msg += email_msg
+
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML", reply_markup=reply_markup)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
