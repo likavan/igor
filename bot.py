@@ -8,7 +8,7 @@ from handlers import (
     list_reminders, delete_reminder,
     list_todos, todo_done, todo_delete, todo_edit,
     check_emails, check_new_emails,
-    check_reminders, check_emails_periodic, morning_summary,
+    check_reminders, check_emails_periodic, morning_summary, trigger_morning,
 )
 
 
@@ -46,6 +46,7 @@ def main():
     app.add_handler(CommandHandler("td", todo_done))
     app.add_handler(CommandHandler("te", todo_edit))
     app.add_handler(CommandHandler("tx", todo_delete))
+    app.add_handler(CommandHandler("morning", trigger_morning))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.job_queue.run_repeating(check_reminders, interval=60, first=10)

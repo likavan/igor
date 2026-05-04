@@ -498,6 +498,12 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML", reply_markup=reply_markup)
 
 
+async def trigger_morning(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != YOUR_CHAT_ID:
+        return
+    await morning_summary(context)
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return
