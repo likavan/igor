@@ -1,4 +1,5 @@
 import re
+import random
 from html import escape, unescape
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, ReplyKeyboardMarkup, KeyboardButton
@@ -453,19 +454,40 @@ async def check_emails_periodic(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+MOTIVATION_THEMES = [
+    "disciplína a zvyk",
+    "zameranie a hlboká práca",
+    "akcia namiesto plánovania",
+    "vytrvalosť cez nepohodlie",
+    "jednoduchosť a odstránenie zbytočností",
+    "stoický pokoj pri prekážkach",
+    "remeslo a hrdosť na svoju prácu",
+    "trpezlivosť pri dlhodobých cieľoch",
+    "zodpovednosť za vlastný deň",
+    "menej, ale lepšie",
+]
+
+
 def get_morning_motivation():
+    theme = random.choice(MOTIVATION_THEMES)
+    prompt = (
+        f"Daj jednu ostrú, originálnu motivačnú vetu po slovensky na tému: {theme}. "
+        "Štýl Marcus Aurelius / Seneca / Naval Ravikant — konkrétna myšlienka, žiadne ploché klišé "
+        "ako „nový deň, nová šanca“ či „všetko je možné“. Max 15 slov. "
+        "Vráť IBA samotnú vetu — bez úvodu, bez emoji, bez úvodzoviek, bez podpisu autora."
+    )
     try:
         response = gemini_client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[{"role": "user", "parts": [{"text": "Vymysli krátku motivačnú hlášku na dnešné ráno v slovenčine. Iba jedna veta, max 15 slov, bez emoji, bez úvodu, bez úvodzoviek."}]}],
-            config=types.GenerateContentConfig(max_output_tokens=80),
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=types.GenerateContentConfig(max_output_tokens=120, temperature=1.0),
         )
-        text = (response.text or "").strip().strip('"\'').strip()
+        text = (response.text or "").strip().strip('"\'„“').strip()
         if text:
             return text
     except Exception:
         pass
-    return "Nový deň, nové možnosti."
+    return "Sústredenie je výber toho, čomu povieš nie."
 
 
 async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
@@ -483,19 +505,41 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
             msg += f"• {escape(r[1])} – {escape(r[0])}\n"
         msg += "\n"
 
+    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
+
     now = datetime.now(TZ)
     since = (now - timedelta(days=1)).replace(hour=15, minute=30, second=0, microsecond=0)
-    keyboard = []
     try:
         emails = fetch_emails(since_dt=since)
     except Exception:
         emails = []
-    if emails:
-        email_msg, keyboard = format_email_list(emails, f"Maily od {since.strftime('%d.%m. %H:%M')}", highlight_unseen=True)
-        msg += email_msg
+    if not emails:
+        return
+    email_msg, keyboard = format_email_list(emails, f"Maily od {since.strftime('%d.%m. %H:%M')}", highlight_unseen=True)
+    for chunk in _split_message(email_msg):
+        await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=chunk, parse_mode="HTML")
+    if keyboard:
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID,
+            text="Otvor email:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
 
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML", reply_markup=reply_markup)
+
+def _split_message(text, limit=3800):
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 async def trigger_morning(update: Update, context: ContextTypes.DEFAULT_TYPE):
