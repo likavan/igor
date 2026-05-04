@@ -507,8 +507,7 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=msg, parse_mode="HTML")
 
-    now = datetime.now(TZ)
-    since = (now - timedelta(days=1)).replace(hour=15, minute=30, second=0, microsecond=0)
+    since = _last_workday_end(datetime.now(TZ))
     try:
         emails = fetch_emails(since_dt=since)
     except Exception:
@@ -516,14 +515,17 @@ async def morning_summary(context: ContextTypes.DEFAULT_TYPE):
     if not emails:
         return
     email_msg, keyboard = format_email_list(emails, f"Maily od {since.strftime('%d.%m. %H:%M')}", highlight_unseen=True)
-    for chunk in _split_message(email_msg):
-        await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=chunk, parse_mode="HTML")
-    if keyboard:
-        await context.bot.send_message(
-            chat_id=YOUR_CHAT_ID,
-            text="Otvor email:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+    chunks = _split_message(email_msg)
+    for i, chunk in enumerate(chunks):
+        markup = InlineKeyboardMarkup(keyboard) if i == len(chunks) - 1 and keyboard else None
+        await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=chunk, parse_mode="HTML", reply_markup=markup)
+
+
+def _last_workday_end(now):
+    since = now - timedelta(days=1)
+    while since.weekday() >= 5:
+        since -= timedelta(days=1)
+    return since.replace(hour=15, minute=30, second=0, microsecond=0)
 
 
 def _split_message(text, limit=3800):
